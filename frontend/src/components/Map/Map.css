@@ -1,0 +1,12 @@
+.map-container {
+  height: 100%;
+  width: 100%;
+  min-height: 500px;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+/* Fix for Leaflet icon issues */
+.leaflet-default-icon-path {
+  background-image: url(https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png);
+}
