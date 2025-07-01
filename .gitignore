@@ -5,4 +5,10 @@ dem_cache/
 dem_data/
 .claude/
 trail_env/
+backend/venv/
+frontend/node_modules/
+*.pyc
+.pytest_cache/
+.env
+*.log
 

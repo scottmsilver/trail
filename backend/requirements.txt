@@ -1,0 +1,27 @@
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+pydantic==2.5.3
+pytest==7.4.4
+pytest-asyncio==0.23.3
+httpx==0.26.0
+python-multipart==0.0.6
+
+# From original project
+rasterio==1.4.3
+osmnx==2.0.4
+geopandas==1.1.1
+py3dep==0.19.0
+gpxpy==1.6.2
+shapely==2.1.1
+matplotlib==3.10.3
+numpy==2.3.1
+scipy==1.16.0
+pyproj==3.7.1
+tqdm==4.67.1
+
+# For async processing
+celery==5.3.6
+redis==5.0.1
+
+# For WebSockets
+websockets==12.0
