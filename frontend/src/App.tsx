@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import './App.css'
 import Map from './components/Map/Map'
+import SearchBox from './components/SearchBox/SearchBox'
 import api from './services/api'
 import type { Coordinate, RouteResult } from './services/api'
 
@@ -10,6 +11,7 @@ function App() {
   const [route, setRoute] = useState<RouteResult | null>(null)
   const [loading, setLoading] = useState(false)
   const [status, setStatus] = useState('')
+  const [mapCenter, setMapCenter] = useState<Coordinate | null>(null)
 
   const handleMapClick = (coord: Coordinate) => {
     if (!start) {
@@ -78,6 +80,13 @@ function App() {
     setStatus('Click on the map to set start point.')
   }
 
+  const handleLocationSelect = (lat: number, lon: number, name?: string) => {
+    setMapCenter({ lat, lon })
+    if (name) {
+      setStatus(`Centered on: ${name}`)
+    }
+  }
+
   return (
     <div className="app">
       <header className="app-header">
@@ -130,8 +139,10 @@ function App() {
             start={start || undefined}
             end={end || undefined}
             path={route?.path}
+            center={mapCenter || undefined}
             onMapClick={handleMapClick}
           />
+          <SearchBox onLocationSelect={handleLocationSelect} />
         </div>
       </main>
     </div>

@@ -10,3 +10,39 @@
 .leaflet-default-icon-path {
   background-image: url(https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png);
 }
+
+/* Layer control styling */
+.leaflet-control-layers {
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(10px);
+  border: none;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.leaflet-control-layers-expanded {
+  padding: 12px 16px;
+  min-width: 150px;
+}
+
+.leaflet-control-layers-separator {
+  border-top: 1px solid #e0e0e0;
+  margin: 8px -16px;
+}
+
+.leaflet-control-layers label {
+  font-size: 14px;
+  color: #333;
+  cursor: pointer;
+  padding: 4px 0;
+  display: flex;
+  align-items: center;
+}
+
+.leaflet-control-layers label:hover {
+  color: #0066cc;
+}
+
+.leaflet-control-layers input {
+  margin-right: 8px;
+}
