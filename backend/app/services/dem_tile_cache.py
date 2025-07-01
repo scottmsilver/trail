@@ -42,7 +42,6 @@ class DEMTileCache:
         # Download DEM Data
         dem_file = self.download_dem(min_lat, max_lat, min_lon, max_lon)
         if dem_file is None:
-            print("Failed to download DEM data.")
             return None
 
         # Read DEM Data
@@ -64,14 +63,12 @@ class DEMTileCache:
         # Get Start and End Indices
         start_idx, end_idx, transformer = self.get_indices(lat1, lon1, lat2, lon2, out_trans, crs, indices)
         if start_idx is None or end_idx is None:
-            print("Start or end point is outside the DEM area.")
             return None
 
         # Compute Least-Cost Path using A* Algorithm
         path = self.astar_pathfinding(cost_surface, indices, start_idx, end_idx, out_trans, transformer)
 
         if path is None:
-            print("No path found.")
             return None
 
         # Skip plotting in backend service
@@ -93,7 +90,6 @@ class DEMTileCache:
         if not os.path.exists(dem_dir):
             os.makedirs(dem_dir)
         
-        print("Downloading DEM data...")
         try:
             # Use py3dep to download DEM data
             dem = py3dep.get_map(
@@ -203,7 +199,6 @@ class DEMTileCache:
         bbox_polygon = box(min_lon, min_lat, max_lon, max_lat)
         
         # Fetch OSM data for obstacles
-        print("Fetching obstacle data from OSM...")
         try:
             tags = {
                 'natural': ['water', 'wetland'],
@@ -228,7 +223,6 @@ class DEMTileCache:
         - obstacle_mask: Numpy array where obstacle cells are True.
         """
         if obstacles.empty:
-            print("No obstacles found in the area.")
             obstacle_mask = np.zeros(dem_shape, dtype=bool)
             return obstacle_mask
 
@@ -240,7 +234,6 @@ class DEMTileCache:
         shapes = [(geom, 1) for geom in obstacle_geometries if geom is not None]
 
         # Rasterize obstacles
-        print("Rasterizing obstacle data...")
         obstacle_raster = rasterize(
             shapes,
             out_shape=dem_shape,
@@ -271,7 +264,7 @@ class DEMTileCache:
         cost_surface = 1 + slope * 10  # Adjust the multiplier as needed
 
         # Assign high cost to obstacle cells
-        cost_surface[obstacle_mask] = np.inf  # Alternatively, use a very high cost
+        cost_surface[obstacle_mask] = 1000  # Very high cost but not infinite
 
         return cost_surface
 
@@ -455,32 +448,3 @@ class DEMTileCache:
         plt.tight_layout()
         plt.show()
 
-# Example usage
-if __name__ == "__main__":
-    # Use the same coordinates from your other files (Utah area)
-    lat1, lon1 = 40.630, -111.580  # Start point
-    lat2, lon2 = 40.650, -111.560  # End point
-    
-    print(f"Finding route from ({lat1}, {lon1}) to ({lat2}, {lon2})")
-    
-    route_finder = DEMTileCache(buffer=0.02)  # Smaller buffer for testing
-    path_coords = route_finder.find_route(lat1, lon1, lat2, lon2)
-    
-    if path_coords:
-        print(f"Hiking route found with {len(path_coords)} waypoints!")
-        # Save to GPX file
-        import gpxpy
-        gpx = gpxpy.gpx.GPX()
-        gpx_track = gpxpy.gpx.GPXTrack()
-        gpx.tracks.append(gpx_track)
-        gpx_segment = gpxpy.gpx.GPXTrackSegment()
-        gpx_track.segments.append(gpx_segment)
-        
-        for lon, lat in path_coords:
-            gpx_segment.points.append(gpxpy.gpx.GPXTrackPoint(lat, lon))
-        
-        with open('path_t7.gpx', 'w') as f:
-            f.write(gpx.to_xml())
-        print("Route saved to path_t7.gpx")
-    else:
-        print("No route could be found.")
