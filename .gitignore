@@ -1,0 +1,8 @@
+.venv/
+.vscode/
+__pycache__/
+dem_cache/
+dem_data/
+.claude/
+trail_env/
+
