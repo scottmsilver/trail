@@ -2,7 +2,7 @@ import math
 import logging
 from typing import Dict, List, Tuple, Optional
 from app.models.route import Coordinate
-# from app.services.dem_tile_cache import DEMTileCache  # TODO: Enable after installing deps
+from app.services.dem_tile_cache import DEMTileCache
 
 logger = logging.getLogger(__name__)
 
@@ -13,7 +13,7 @@ class TrailFinderService:
     def __init__(self, buffer: float = 0.05):
         self.buffer = buffer
         self.max_distance_km = 50  # Maximum allowed distance between points
-        # self.dem_cache = DEMTileCache(buffer=buffer)  # TODO: Enable after installing deps
+        self.dem_cache = DEMTileCache(buffer=buffer)
     
     def validate_route_request(self, start: Coordinate, end: Coordinate) -> bool:
         """Validate that the route request is reasonable"""
@@ -63,13 +63,18 @@ class TrailFinderService:
         Returns: (path_coordinates, statistics)
         """
         try:
-            # TODO: Use the DEM tile cache to find the route
-            # For now, create a simple path
-            path = [
-                start,
-                Coordinate(lat=(start.lat + end.lat) / 2, lon=(start.lon + end.lon) / 2),
-                end
-            ]
+            # Use the DEM tile cache to find the route
+            path_coords = self.dem_cache.find_route(
+                start.lat, start.lon, 
+                end.lat, end.lon
+            )
+            
+            if not path_coords:
+                logger.error("No route found by DEM cache")
+                return [], {"error": "No route found"}
+            
+            # Convert to Coordinate objects
+            path = [Coordinate(lat=lat, lon=lon) for lon, lat in path_coords]
             
             # Calculate statistics
             total_distance = 0

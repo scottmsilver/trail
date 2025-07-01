@@ -46,9 +46,15 @@ function App() {
         setStatus(`Processing: ${status.progress}%`)
         
         if (status.status === 'completed') {
-          const routeData = await api.getRoute(response.routeId)
-          setRoute(routeData)
-          setStatus(`Route found! Distance: ${routeData.stats.distance_km}km`)
+          try {
+            const routeData = await api.getRoute(response.routeId)
+            console.log('Route data:', routeData)
+            setRoute(routeData)
+            setStatus(`Route found! Distance: ${routeData.stats.distance_km}km`)
+          } catch (err) {
+            console.error('Error getting route:', err)
+            setStatus('Error getting route data')
+          }
           break
         } else if (status.status === 'failed') {
           setStatus('Route calculation failed: ' + status.message)
