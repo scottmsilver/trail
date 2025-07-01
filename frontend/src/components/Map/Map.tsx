@@ -1,7 +1,20 @@
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMapEvents } from 'react-leaflet'
-import { LatLngExpression } from 'leaflet'
+import L, { LatLngExpression } from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import './Map.css'
+
+// Fix for default markers not showing
+import icon from 'leaflet/dist/images/marker-icon.png'
+import iconShadow from 'leaflet/dist/images/marker-shadow.png'
+
+let DefaultIcon = L.icon({
+    iconUrl: icon,
+    shadowUrl: iconShadow,
+    iconSize: [25, 41],
+    iconAnchor: [12, 41]
+})
+
+L.Marker.prototype.options.icon = DefaultIcon
 
 interface Coordinate {
   lat: number

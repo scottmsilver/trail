@@ -1,6 +1,10 @@
 import math
+import logging
 from typing import Dict, List, Tuple, Optional
 from app.models.route import Coordinate
+# from app.services.dem_tile_cache import DEMTileCache  # TODO: Enable after installing deps
+
+logger = logging.getLogger(__name__)
 
 
 class TrailFinderService:
@@ -9,6 +13,7 @@ class TrailFinderService:
     def __init__(self, buffer: float = 0.05):
         self.buffer = buffer
         self.max_distance_km = 50  # Maximum allowed distance between points
+        # self.dem_cache = DEMTileCache(buffer=buffer)  # TODO: Enable after installing deps
     
     def validate_route_request(self, start: Coordinate, end: Coordinate) -> bool:
         """Validate that the route request is reasonable"""
@@ -57,19 +62,39 @@ class TrailFinderService:
         Find optimal route between two coordinates
         Returns: (path_coordinates, statistics)
         """
-        # TODO: Integrate with t7_fixed.py logic
-        # For now, return a mock route
-        path = [
-            start,
-            Coordinate(lat=(start.lat + end.lat) / 2, lon=(start.lon + end.lon) / 2),
-            end
-        ]
-        
-        stats = {
-            "distance_km": self._calculate_distance(start, end),
-            "elevation_gain_m": 150,
-            "estimated_time_min": 45,
-            "difficulty": "moderate"
-        }
-        
-        return path, stats
+        try:
+            # TODO: Use the DEM tile cache to find the route
+            # For now, create a simple path
+            path = [
+                start,
+                Coordinate(lat=(start.lat + end.lat) / 2, lon=(start.lon + end.lon) / 2),
+                end
+            ]
+            
+            # Calculate statistics
+            total_distance = 0
+            for i in range(1, len(path)):
+                total_distance += self._calculate_distance(path[i-1], path[i])
+            
+            stats = {
+                "distance_km": round(total_distance, 2),
+                "elevation_gain_m": 0,  # TODO: Calculate from DEM data
+                "estimated_time_min": int(total_distance * 15),  # Rough estimate: 4km/h
+                "difficulty": self._estimate_difficulty(total_distance),
+                "waypoints": len(path)
+            }
+            
+            return path, stats
+            
+        except Exception as e:
+            logger.error(f"Error finding route: {str(e)}")
+            return [], {"error": str(e)}
+    
+    def _estimate_difficulty(self, distance_km: float) -> str:
+        """Estimate difficulty based on distance"""
+        if distance_km < 5:
+            return "easy"
+        elif distance_km < 10:
+            return "moderate"
+        else:
+            return "hard"

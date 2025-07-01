@@ -1,13 +1,19 @@
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, status, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 import uuid
 from datetime import datetime, timezone
 from typing import Dict
+import asyncio
+import logging
 
 from app.models.route import (
     RouteRequest, RouteResponse, RouteStatus, 
     RouteStatusResponse, RouteResult, Coordinate
 )
+from app.services.trail_finder import TrailFinderService
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="Trail Finder API",
@@ -27,6 +33,9 @@ app.add_middleware(
 # In-memory storage for now (will be replaced with Redis)
 routes_storage: Dict[str, dict] = {}
 
+# Initialize trail finder service
+trail_finder = TrailFinderService()
+
 
 @app.get("/api/health")
 async def health_check():
@@ -34,8 +43,46 @@ async def health_check():
     return {"status": "healthy", "service": "trail-finder-api"}
 
 
+async def process_route(route_id: str, request: RouteRequest):
+    """Background task to process route calculation"""
+    try:
+        # Update progress
+        routes_storage[route_id]["progress"] = 10
+        
+        # Validate request
+        if not trail_finder.validate_route_request(request.start, request.end):
+            routes_storage[route_id]["status"] = RouteStatus.FAILED
+            routes_storage[route_id]["message"] = "Invalid route request"
+            return
+        
+        routes_storage[route_id]["progress"] = 30
+        
+        # Find the route
+        path, stats = await trail_finder.find_route(
+            request.start, 
+            request.end,
+            request.options.model_dump() if request.options else {}
+        )
+        
+        routes_storage[route_id]["progress"] = 90
+        
+        if not path:
+            routes_storage[route_id]["status"] = RouteStatus.FAILED
+            routes_storage[route_id]["message"] = stats.get("error", "No route found")
+        else:
+            routes_storage[route_id]["status"] = RouteStatus.COMPLETED
+            routes_storage[route_id]["path"] = path
+            routes_storage[route_id]["stats"] = stats
+            routes_storage[route_id]["progress"] = 100
+            
+    except Exception as e:
+        logger.error(f"Error processing route {route_id}: {str(e)}")
+        routes_storage[route_id]["status"] = RouteStatus.FAILED
+        routes_storage[route_id]["message"] = f"Processing error: {str(e)}"
+
+
 @app.post("/api/routes/calculate", response_model=RouteResponse, status_code=status.HTTP_202_ACCEPTED)
-async def calculate_route(request: RouteRequest):
+async def calculate_route(request: RouteRequest, background_tasks: BackgroundTasks):
     """Start route calculation"""
     route_id = str(uuid.uuid4())
     
@@ -48,7 +95,8 @@ async def calculate_route(request: RouteRequest):
         "created_at": datetime.now(timezone.utc).isoformat()
     }
     
-    # TODO: Start async processing with Celery
+    # Start background processing
+    background_tasks.add_task(process_route, route_id, request)
     
     return RouteResponse(routeId=route_id, status=RouteStatus.PROCESSING)
 
@@ -75,21 +123,11 @@ async def get_route(route_id: str):
     
     route = routes_storage[route_id]
     
-    # For now, return a mock completed route
-    if route["status"] == RouteStatus.PROCESSING:
-        # TODO: Check actual processing status
-        route["status"] = RouteStatus.COMPLETED
-        route["path"] = [
-            Coordinate(lat=40.630, lon=-111.580),
-            Coordinate(lat=40.640, lon=-111.570),
-            Coordinate(lat=40.650, lon=-111.560)
-        ]
-        route["stats"] = {
-            "distance_km": 3.2,
-            "elevation_gain_m": 150,
-            "estimated_time_min": 45,
-            "difficulty": "moderate"
-        }
+    if route["status"] != RouteStatus.COMPLETED:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Route is not ready. Status: {route['status']}"
+        )
     
     return RouteResult(
         routeId=route_id,
