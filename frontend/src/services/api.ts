@@ -1,4 +1,5 @@
-import axios, { AxiosInstance } from 'axios'
+import axios from 'axios'
+import type { AxiosInstance } from 'axios'
 
 export interface Coordinate {
   lat: number
@@ -80,4 +81,5 @@ export class TrailAPI {
   }
 }
 
-export default new TrailAPI()
+const api = new TrailAPI()
+export default api

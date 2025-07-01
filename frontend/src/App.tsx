@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import './App.css'
 import Map from './components/Map/Map'
-import { TrailAPI, Coordinate, RouteResult } from './services/api'
+import api from './services/api'
+import type { Coordinate, RouteResult } from './services/api'
 
 function App() {
   const [start, setStart] = useState<Coordinate | null>(null)
@@ -33,7 +34,7 @@ function App() {
     setStatus('Calculating route...')
     
     try {
-      const api = new TrailAPI()
+      // Use the imported api instance
       const response = await api.calculateRoute(start, end)
       
       // Poll for status
