@@ -101,6 +101,51 @@ button {
   background: #cbd5e0;
 }
 
+.btn-debug {
+  background: #f59e0b;
+  color: white;
+}
+
+.btn-debug:hover:not(:disabled) {
+  background: #d97706;
+}
+
+.btn-debug:disabled {
+  background: #cbd5e0;
+  cursor: not-allowed;
+}
+
+.profile-selector {
+  margin: 15px 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.profile-selector label {
+  font-weight: 600;
+  color: #333;
+}
+
+.profile-select {
+  padding: 8px 12px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  background: white;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.profile-select:hover {
+  border-color: #007bff;
+}
+
+.profile-select:focus {
+  outline: none;
+  border-color: #007bff;
+  box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
+}
+
 .route-info {
   background: #f0fdf4;
   border: 1px solid #86efac;

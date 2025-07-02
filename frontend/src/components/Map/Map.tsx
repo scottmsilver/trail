@@ -1,8 +1,10 @@
-import { MapContainer, TileLayer, Marker, Popup, Polyline, useMapEvents, LayersControl, useMap } from 'react-leaflet'
-import { useEffect } from 'react'
+import { MapContainer, TileLayer, Marker, Popup, Polyline, useMapEvents, LayersControl, useMap, LayerGroup } from 'react-leaflet'
+import { useEffect, useState, useRef } from 'react'
 import L, { LatLngExpression } from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import './Map.css'
+import SlopeOverlay from '../SlopeOverlay/SlopeOverlay'
+import PathWithSlopes from '../PathWithSlopes/PathWithSlopes'
 
 // Fix for default markers not showing
 import icon from 'leaflet/dist/images/marker-icon.png'
@@ -26,6 +28,7 @@ interface MapProps {
   start?: Coordinate
   end?: Coordinate
   path?: Coordinate[]
+  pathWithSlopes?: any[]  // Path with slope data from backend
   center?: { lat: number; lon: number }
   onMapClick?: (coord: Coordinate) => void
 }
@@ -53,13 +56,40 @@ function MapCenterController({ center }: { center?: { lat: number; lon: number }
   return null
 }
 
-export default function Map({ start, end, path, center, onMapClick }: MapProps) {
+function TerrainSlopesController({ setShowSlopes }: { setShowSlopes: (show: boolean) => void }) {
+  const map = useMap()
+  
+  useEffect(() => {
+    const handleOverlayAdd = (e: any) => {
+      if (e.name === 'Terrain Slopes') {
+        setShowSlopes(true)
+      }
+    }
+    
+    const handleOverlayRemove = (e: any) => {
+      if (e.name === 'Terrain Slopes') {
+        setShowSlopes(false)
+      }
+    }
+    
+    map.on('overlayadd', handleOverlayAdd)
+    map.on('overlayremove', handleOverlayRemove)
+    
+    return () => {
+      map.off('overlayadd', handleOverlayAdd)
+      map.off('overlayremove', handleOverlayRemove)
+    }
+  }, [map, setShowSlopes])
+  
+  return null
+}
+
+
+export default function Map({ start, end, path, pathWithSlopes, center, onMapClick }: MapProps) {
   // Default center (Utah area)
   const defaultCenter: LatLngExpression = [40.640, -111.570]
   const zoom = 13
-
-  // Convert path to Leaflet format
-  const polylinePath: LatLngExpression[] = path?.map(coord => [coord.lat, coord.lon]) || []
+  const [showSlopes, setShowSlopes] = useState(false)
 
   return (
     <MapContainer center={defaultCenter} zoom={zoom} className="map-container">
@@ -119,7 +149,14 @@ export default function Map({ start, end, path, center, onMapClick }: MapProps) 
             opacity={0.3}
           />
         </LayersControl.Overlay>
+
+        <LayersControl.Overlay name="Terrain Slopes" checked={showSlopes}>
+          <LayerGroup />
+        </LayersControl.Overlay>
       </LayersControl>
+
+      <SlopeOverlay enabled={showSlopes} />
+      <TerrainSlopesController setShowSlopes={setShowSlopes} />
 
       {start && (
         <Marker position={[start.lat, start.lon]}>
@@ -133,13 +170,8 @@ export default function Map({ start, end, path, center, onMapClick }: MapProps) 
         </Marker>
       )}
 
-      {polylinePath.length > 0 && (
-        <Polyline
-          positions={polylinePath}
-          color="blue"
-          weight={3}
-          opacity={0.8}
-        />
+      {path && path.length > 0 && (
+        <PathWithSlopes path={path} pathWithSlopes={pathWithSlopes} />
       )}
 
       <MapClickHandler onMapClick={onMapClick} />

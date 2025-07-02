@@ -3,6 +3,8 @@ import logging
 from typing import Dict, List, Tuple, Optional
 from app.models.route import Coordinate
 from app.services.dem_tile_cache import DEMTileCache
+from app.services.obstacle_config import ObstacleConfig, ObstaclePresets
+from app.services.path_preferences import PathPreferences, PathPreferencePresets
 
 logger = logging.getLogger(__name__)
 
@@ -10,10 +12,20 @@ logger = logging.getLogger(__name__)
 class TrailFinderService:
     """Service for finding hiking trails between coordinates"""
     
-    def __init__(self, buffer: float = 0.05):
+    def __init__(self, buffer: float = 0.05, debug_mode: bool = False, 
+                 obstacle_config: ObstacleConfig = None, path_preferences: PathPreferences = None):
         self.buffer = buffer
         self.max_distance_km = 50  # Maximum allowed distance between points
-        self.dem_cache = DEMTileCache(buffer=buffer)
+        self.debug_mode = debug_mode
+        self.obstacle_config = obstacle_config
+        self.path_preferences = path_preferences
+        self.dem_cache = DEMTileCache(
+            buffer=buffer, 
+            debug_mode=debug_mode, 
+            obstacle_config=obstacle_config,
+            path_preferences=path_preferences
+        )
+        logger.info(f"TrailFinderService initialized with debug_mode={debug_mode}")
     
     def validate_route_request(self, start: Coordinate, end: Coordinate) -> bool:
         """Validate that the route request is reasonable"""
@@ -63,6 +75,16 @@ class TrailFinderService:
         Returns: (path_coordinates, statistics)
         """
         try:
+            # Validate route request first
+            if not self.validate_route_request(start, end):
+                error_stats = {"error": "Invalid route request: coordinates too far apart or identical"}
+                
+                # Add debug data field for consistency
+                if self.debug_mode:
+                    error_stats["debug_data"] = None
+                
+                return [], error_stats
+            
             # Use the DEM tile cache to find the route
             path_coords = self.dem_cache.find_route(
                 start.lat, start.lon, 
@@ -71,35 +93,115 @@ class TrailFinderService:
             
             if not path_coords:
                 logger.error("No route found by DEM cache")
-                return [], {"error": "No route found"}
+                error_stats = {"error": "No route found"}
+                
+                # Add debug data even for failed routes if in debug mode
+                if self.debug_mode:
+                    debug_data = self.dem_cache.get_debug_data()
+                    error_stats["debug_data"] = debug_data
+                
+                return [], error_stats
             
-            # Convert to Coordinate objects
-            path = [Coordinate(lat=lat, lon=lon) for lon, lat in path_coords]
+            # Convert path_coords with slopes to Coordinate objects
+            path = []
+            for point in path_coords:
+                if isinstance(point, dict):
+                    # New format with slope data
+                    path.append(Coordinate(lat=point['lat'], lon=point['lon']))
+                else:
+                    # Old format (lon, lat) tuple
+                    lon, lat = point
+                    path.append(Coordinate(lat=lat, lon=lon))
             
             # Calculate statistics
             total_distance = 0
+            total_elevation_gain = 0
+            max_slope = 0
+            
             for i in range(1, len(path)):
                 total_distance += self._calculate_distance(path[i-1], path[i])
+                
+                # Calculate elevation gain from slope data if available
+                if isinstance(path_coords[i-1], dict) and 'elevation' in path_coords[i-1]:
+                    if i < len(path_coords) and isinstance(path_coords[i], dict) and 'elevation' in path_coords[i]:
+                        elevation_change = path_coords[i]['elevation'] - path_coords[i-1]['elevation']
+                        if elevation_change > 0:
+                            total_elevation_gain += elevation_change
+                        
+                        if 'slope' in path_coords[i-1]:
+                            max_slope = max(max_slope, abs(path_coords[i-1]['slope']))
             
             stats = {
                 "distance_km": round(total_distance, 2),
-                "elevation_gain_m": 0,  # TODO: Calculate from DEM data
+                "elevation_gain_m": round(total_elevation_gain),
                 "estimated_time_min": int(total_distance * 15),  # Rough estimate: 4km/h
-                "difficulty": self._estimate_difficulty(total_distance),
-                "waypoints": len(path)
+                "difficulty": self._estimate_difficulty_with_slope(total_distance, max_slope),
+                "waypoints": len(path),
+                "max_slope": round(max_slope, 1)
             }
+            
+            # Include the path with slope data if available
+            if isinstance(path_coords[0], dict):
+                stats["path_with_slopes"] = path_coords
+            
+            # Add debug data if in debug mode
+            if self.debug_mode:
+                debug_data = self.dem_cache.get_debug_data()
+                logger.info(f"Debug data retrieved: {debug_data is not None}")
+                if debug_data:
+                    stats["debug_data"] = debug_data
+                    logger.info(f"Debug data added to stats: {len(debug_data.get('explored_nodes', []))} explored nodes")
+                else:
+                    # Ensure debug_data field exists even if empty
+                    stats["debug_data"] = None
+                    logger.warning("Debug mode enabled but no debug data collected")
             
             return path, stats
             
         except Exception as e:
             logger.error(f"Error finding route: {str(e)}")
-            return [], {"error": str(e)}
+            error_stats = {"error": str(e)}
+            
+            # Add debug data even for failed routes if in debug mode
+            if self.debug_mode:
+                debug_data = self.dem_cache.get_debug_data()
+                error_stats["debug_data"] = debug_data
+            
+            return [], error_stats
     
     def _estimate_difficulty(self, distance_km: float) -> str:
         """Estimate difficulty based on distance"""
         if distance_km < 5:
             return "easy"
         elif distance_km < 10:
+            return "moderate"
+        else:
+            return "hard"
+    
+    def _estimate_difficulty_with_slope(self, distance_km: float, max_slope: float) -> str:
+        """Estimate difficulty based on distance and slope"""
+        # Base difficulty from distance
+        if distance_km < 3:
+            base_difficulty = 1
+        elif distance_km < 8:
+            base_difficulty = 2
+        else:
+            base_difficulty = 3
+            
+        # Slope difficulty
+        if max_slope < 10:
+            slope_difficulty = 1
+        elif max_slope < 20:
+            slope_difficulty = 2
+        else:
+            slope_difficulty = 3
+            
+        # Combined difficulty
+        total_difficulty = max(base_difficulty, slope_difficulty)
+        
+        if total_difficulty == 1:
+            return "easy"
+        elif total_difficulty == 2:
             return "moderate"
         else:
             return "hard"

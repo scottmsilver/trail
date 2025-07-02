@@ -246,3 +246,199 @@ class TestTrailFinder:
             else:
                 print(f"  No path found: {stats.get('error', 'Unknown error')}")
                 assert "error" in stats
+    
+    @pytest.mark.asyncio
+    async def test_debug_mode_functionality(self):
+        """Test that debug mode collects pathfinding information"""
+        from app.services.trail_finder import TrailFinderService
+        
+        # Create debug-enabled service
+        debug_service = TrailFinderService(debug_mode=True)
+        
+        # Use very close coordinates to ensure fast processing
+        start = Coordinate(lat=40.6573, lon=-111.5705)
+        end = Coordinate(lat=40.6575, lon=-111.5710)
+        
+        path, stats = await debug_service.find_route(start, end, {})
+        
+        # Should have debug data in stats
+        assert "debug_data" in stats
+        debug_data = stats["debug_data"]
+        
+        # Check that debug data has expected structure
+        assert "explored_nodes" in debug_data
+        assert "decision_points" in debug_data
+        assert "grid_exploration" in debug_data
+        assert "terrain_costs" in debug_data
+        assert "bounds" in debug_data
+        
+        # Check that we explored some nodes
+        assert len(debug_data["explored_nodes"]) > 0
+        assert len(debug_data["decision_points"]) > 0
+        
+        # Check grid exploration data
+        grid = debug_data["grid_exploration"]
+        assert "shape" in grid
+        assert "g_scores" in grid
+        assert "f_scores" in grid
+        assert "explored" in grid
+        assert "in_path" in grid
+        
+        print(f"Debug mode explored {len(debug_data['explored_nodes'])} nodes")
+        print(f"Made {len(debug_data['decision_points'])} decision points")
+        print(f"Grid shape: {grid['shape']}")
+        
+        # Verify that some nodes were marked as explored
+        explored_count = sum(sum(row) for row in grid["explored"])
+        assert explored_count > 0
+        print(f"Marked {explored_count} grid cells as explored")
+    
+    @pytest.mark.asyncio
+    async def test_debug_mode_with_problematic_coordinates(self):
+        """Test debug mode with coordinates that might cause issues"""
+        from app.services.trail_finder import TrailFinderService
+        
+        # Create debug-enabled service
+        debug_service = TrailFinderService(debug_mode=True)
+        
+        # Use the coordinates that caused the frontend error
+        start = Coordinate(lat=40.6465, lon=-111.5754)
+        end = Coordinate(lat=40.6554, lon=-111.5715)
+        
+        path, stats = await debug_service.find_route(start, end, {})
+        
+        # Should always return stats, even if no path found
+        assert isinstance(stats, dict)
+        
+        if path:
+            # If path found, should have debug data
+            assert "debug_data" in stats
+            assert stats["debug_data"] is not None
+            print(f"Successful route with {len(path)} points and debug data")
+        else:
+            # If no path found, should have error message but might not have debug data
+            assert "error" in stats
+            print(f"No route found: {stats['error']}")
+            
+        # Check if debug_data exists and is properly structured
+        if "debug_data" in stats and stats["debug_data"]:
+            debug_data = stats["debug_data"]
+            assert "explored_nodes" in debug_data
+            assert "decision_points" in debug_data
+            print(f"Debug data present with {len(debug_data['explored_nodes'])} explored nodes")
+        else:
+            print("No debug data returned (this might happen with failed routes)")
+    
+    @pytest.mark.asyncio
+    async def test_debug_endpoint_error_handling(self):
+        """Test the debug endpoint handles errors gracefully"""
+        import json
+        from app.main import debug_trail_finder
+        from app.models.route import RouteResult, RouteStatus
+        from datetime import datetime, timezone
+        
+        # Test with problematic coordinates
+        start = Coordinate(lat=40.6465, lon=-111.5754)
+        end = Coordinate(lat=40.6554, lon=-111.5715)
+        
+        # Simulate what the endpoint does
+        try:
+            path, stats = await debug_trail_finder.find_route(start, end, {})
+            
+            # Should be able to create RouteResult even if no path
+            if not path:
+                # Ensure error is properly handled
+                assert "error" in stats
+                route_result = RouteResult(
+                    routeId="debug",
+                    status=RouteStatus.FAILED,
+                    path=[],
+                    stats=stats,
+                    createdAt=datetime.now(timezone.utc).isoformat()
+                )
+            else:
+                route_result = RouteResult(
+                    routeId="debug", 
+                    status=RouteStatus.COMPLETED,
+                    path=path,
+                    stats=stats,
+                    createdAt=datetime.now(timezone.utc).isoformat()
+                )
+            
+            # Should be JSON serializable
+            json_str = json.dumps(route_result.model_dump())
+            assert len(json_str) > 0
+            print("Route result successfully serialized")
+            
+        except Exception as e:
+            print(f"Unexpected error: {e}")
+            assert False, f"Debug endpoint should handle errors gracefully: {e}"
+    
+    @pytest.mark.asyncio
+    async def test_debug_with_impossible_route(self):
+        """Test debug mode with coordinates that should fail to find a route"""
+        from app.services.trail_finder import TrailFinderService
+        
+        # Create debug-enabled service
+        debug_service = TrailFinderService(debug_mode=True)
+        
+        # Use coordinates that are very far apart (should exceed max distance)
+        start = Coordinate(lat=40.0, lon=-111.0)
+        end = Coordinate(lat=41.0, lon=-112.0)  # >50km apart
+        
+        path, stats = await debug_service.find_route(start, end, {})
+        
+        # Should not find a path due to distance validation
+        assert len(path) == 0
+        assert "error" in stats or len(path) == 0
+        
+        # Should still have debug_data field (even if None)
+        assert "debug_data" in stats
+        print(f"Failed route stats keys: {list(stats.keys())}")
+        
+        if stats["debug_data"]:
+            print("Debug data collected even for failed route")
+        else:
+            print("No debug data for failed route (expected for validation failures)")
+    
+    @pytest.mark.asyncio
+    async def test_regular_vs_debug_parity(self):
+        """Test that regular and debug modes find the same route"""
+        from app.services.trail_finder import TrailFinderService
+        
+        # Create both regular and debug services
+        regular_service = TrailFinderService(debug_mode=False)
+        debug_service = TrailFinderService(debug_mode=True)
+        
+        # Use the coordinates that the user reported as problematic
+        start = Coordinate(lat=40.6465, lon=-111.5754)
+        end = Coordinate(lat=40.6554, lon=-111.5715)
+        
+        # Find routes with both services
+        regular_path, regular_stats = await regular_service.find_route(start, end, {})
+        debug_path, debug_stats = await debug_service.find_route(start, end, {})
+        
+        print(f"Regular route: {len(regular_path)} points, distance: {regular_stats.get('distance_km', 'N/A')}km")
+        print(f"Debug route: {len(debug_path)} points, distance: {debug_stats.get('distance_km', 'N/A')}km")
+        
+        # Both should find routes (or both should fail)
+        if regular_path:
+            assert debug_path, f"Regular found route ({len(regular_path)} points) but debug failed: {debug_stats.get('error', 'unknown error')}"
+            
+            # Paths should be identical or very similar
+            assert abs(len(regular_path) - len(debug_path)) <= 1, f"Path lengths differ significantly: regular={len(regular_path)}, debug={len(debug_path)}"
+            
+            # Distances should be identical or very close
+            regular_dist = regular_stats.get('distance_km', 0)
+            debug_dist = debug_stats.get('distance_km', 0)
+            assert abs(regular_dist - debug_dist) < 0.01, f"Distances differ: regular={regular_dist}, debug={debug_dist}"
+            
+        else:
+            assert not debug_path, f"Regular failed ({regular_stats.get('error', 'unknown')}) but debug succeeded ({len(debug_path)} points)"
+        
+        # Debug should have additional debug_data
+        if debug_path:
+            assert "debug_data" in debug_stats, "Debug mode should include debug_data"
+            assert debug_stats["debug_data"] is not None, "Debug data should not be None for successful routes"
+            
+        print("✓ Regular and debug routes are consistent")
