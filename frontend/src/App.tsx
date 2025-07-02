@@ -122,6 +122,57 @@ function App() {
     setStatus('Click on the map to set start point.')
   }
 
+  const exportGPX = async () => {
+    if (!route) return
+    
+    try {
+      setStatus('Exporting route as GPX...')
+      
+      // Use the route ID if it exists, otherwise use the export endpoint
+      if (route.routeId && route.routeId !== 'debug') {
+        // Download from existing route
+        const response = await fetch(`http://localhost:9001/api/routes/${route.routeId}/gpx`)
+        if (!response.ok) {
+          throw new Error('Failed to export GPX')
+        }
+        
+        const blob = await response.blob()
+        const url = window.URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `trail_route_${route.routeId.substring(0, 8)}.gpx`
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        window.URL.revokeObjectURL(url)
+        
+        setStatus('GPX file downloaded successfully!')
+      } else {
+        // Export directly from current route data
+        if (!start || !end) {
+          setStatus('No route data to export')
+          return
+        }
+        
+        const response = await api.exportRouteAsGPX(start, end, routeOptions)
+        const blob = await response.blob()
+        const url = window.URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `trail_route_${new Date().toISOString().replace(/[:.]/g, '-')}.gpx`
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        window.URL.revokeObjectURL(url)
+        
+        setStatus('GPX file exported successfully!')
+      }
+    } catch (error) {
+      console.error('Error exporting GPX:', error)
+      setStatus('Error exporting GPX: ' + (error as Error).message)
+    }
+  }
+
   const handleLocationSelect = (lat: number, lon: number, name?: string) => {
     setMapCenter({ lat, lon })
     if (name) {
@@ -204,6 +255,13 @@ function App() {
                 <li>Difficulty: {route.stats.difficulty}</li>
                 <li>Waypoints: {route.path.length}</li>
               </ul>
+              <button 
+                onClick={exportGPX} 
+                className="btn-export"
+                title="Download route as GPX file"
+              >
+                Export GPX
+              </button>
             </div>
           )}
         </div>

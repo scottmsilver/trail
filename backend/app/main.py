@@ -248,11 +248,135 @@ async def get_route(route_id: str):
 @app.get("/api/routes/{route_id}/gpx")
 async def download_gpx(route_id: str):
     """Download route as GPX file"""
+    from fastapi.responses import Response
+    from app.services.gpx_generator import GPXGenerator
+    
     if route_id not in routes_storage:
         raise HTTPException(status_code=404, detail="Route not found")
     
-    # TODO: Generate GPX file
-    raise HTTPException(status_code=501, detail="Not implemented yet")
+    route = routes_storage[route_id]
+    
+    if route["status"] != RouteStatus.COMPLETED:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Route is not ready. Status: {route['status']}"
+        )
+    
+    # Get path and stats
+    path = route.get("path", [])
+    stats = route.get("stats", {})
+    
+    # Generate route name from coordinates
+    if path:
+        start_coord = path[0]
+        end_coord = path[-1]
+        route_name = f"Trail Route {start_coord.lat:.4f},{start_coord.lon:.4f} to {end_coord.lat:.4f},{end_coord.lon:.4f}"
+    else:
+        route_name = "Trail Route"
+    
+    # Create description with statistics
+    description_parts = []
+    if 'distance_km' in stats:
+        description_parts.append(f"Distance: {stats['distance_km']:.2f} km")
+    if 'elevation_gain_m' in stats:
+        description_parts.append(f"Elevation gain: {stats['elevation_gain_m']} m")
+    if 'max_slope' in stats:
+        description_parts.append(f"Max slope: {stats['max_slope']:.1f}°")
+    if 'difficulty' in stats:
+        description_parts.append(f"Difficulty: {stats['difficulty']}")
+    
+    route_description = " | ".join(description_parts)
+    
+    # Check if we have path with slopes
+    if 'path_with_slopes' in stats:
+        gpx_content = GPXGenerator.create_gpx(
+            stats['path_with_slopes'],
+            route_name=route_name,
+            route_description=route_description,
+            stats=stats
+        )
+    else:
+        # Fall back to simple path
+        simple_path = [(coord.lon, coord.lat) for coord in path]
+        gpx_content = GPXGenerator.create_simple_gpx(simple_path, route_name)
+    
+    # Return as downloadable file
+    filename = f"trail_route_{route_id[:8]}.gpx"
+    return Response(
+        content=gpx_content,
+        media_type="application/gpx+xml",
+        headers={
+            "Content-Disposition": f"attachment; filename={filename}"
+        }
+    )
+
+
+@app.post("/api/routes/export/gpx")
+async def export_route_as_gpx(request: RouteRequest):
+    """Export a route directly as GPX without storing it"""
+    from fastapi.responses import Response
+    from app.services.gpx_generator import GPXGenerator
+    
+    # Get configurations based on user profile and custom options
+    profile = request.options.userProfile if request.options else "default"
+    obstacle_config, path_preferences = get_configs_for_profile(profile, request.options)
+    
+    # Create trail finder with user's configurations
+    profile_trail_finder = TrailFinderService(
+        obstacle_config=obstacle_config,
+        path_preferences=path_preferences
+    )
+    
+    # Find the route
+    path, stats = await profile_trail_finder.find_route(
+        request.start, 
+        request.end,
+        request.options.model_dump() if request.options else {}
+    )
+    
+    if not path:
+        raise HTTPException(status_code=404, detail=stats.get("error", "No route found"))
+    
+    # Generate route name
+    route_name = f"Trail Route {request.start.lat:.4f},{request.start.lon:.4f} to {request.end.lat:.4f},{request.end.lon:.4f}"
+    
+    # Create description with statistics
+    description_parts = []
+    if 'distance_km' in stats:
+        description_parts.append(f"Distance: {stats['distance_km']:.2f} km")
+    if 'elevation_gain_m' in stats:
+        description_parts.append(f"Elevation gain: {stats['elevation_gain_m']} m")
+    if 'max_slope' in stats:
+        description_parts.append(f"Max slope: {stats['max_slope']:.1f}°")
+    if 'difficulty' in stats:
+        description_parts.append(f"Difficulty: {stats['difficulty']}")
+    
+    route_description = " | ".join(description_parts)
+    
+    # Generate GPX
+    if 'path_with_slopes' in stats:
+        gpx_content = GPXGenerator.create_gpx(
+            stats['path_with_slopes'],
+            route_name=route_name,
+            route_description=route_description,
+            stats=stats
+        )
+    else:
+        # Fall back to simple path
+        simple_path = [(coord.lon, coord.lat) for coord in path]
+        gpx_content = GPXGenerator.create_simple_gpx(simple_path, route_name)
+    
+    # Return as downloadable file
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"trail_route_{timestamp}.gpx"
+    
+    return Response(
+        content=gpx_content,
+        media_type="application/gpx+xml",
+        headers={
+            "Content-Disposition": f"attachment; filename={filename}"
+        }
+    )
 
 
 @app.post("/api/terrain/slopes")

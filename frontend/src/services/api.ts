@@ -137,6 +137,21 @@ export class TrailAPI {
     const response = await this.client.post('/api/terrain/slopes', bounds)
     return response.data
   }
+
+  async exportRouteAsGPX(
+    start: Coordinate,
+    end: Coordinate,
+    options: RouteOptions = {}
+  ): Promise<Blob> {
+    const response = await this.client.post('/api/routes/export/gpx', {
+      start,
+      end,
+      options,
+    }, {
+      responseType: 'blob',
+    })
+    return response.data
+  }
 }
 
 const api = new TrailAPI()
