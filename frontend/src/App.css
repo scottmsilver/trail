@@ -11,27 +11,14 @@
   box-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
 
-.header-main {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 2rem;
-}
-
-.header-title h1 {
+.app-header h1 {
   margin: 0;
   font-size: 2rem;
 }
 
-.header-title p {
+.app-header p {
   margin: 0.5rem 0 0 0;
   opacity: 0.9;
-}
-
-.header-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 1.5rem;
 }
 
 .app-main {
@@ -132,43 +119,32 @@ button {
   display: flex;
   align-items: center;
   gap: 10px;
+  margin-bottom: 1rem;
 }
 
-.header-toolbar .profile-selector {
-  margin: 0;
+.profile-selector label {
+  font-weight: 600;
+  color: #333;
 }
 
-.header-toolbar .profile-selector label {
-  font-weight: 500;
-  color: white;
-  opacity: 0.9;
-}
-
-.header-toolbar .profile-select {
-  padding: 6px 12px;
-  border: 1px solid rgba(255, 255, 255, 0.3);
+.profile-select {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid #ddd;
   border-radius: 4px;
-  background: rgba(255, 255, 255, 0.2);
-  color: white;
+  background: white;
   font-size: 14px;
   cursor: pointer;
-  backdrop-filter: blur(10px);
 }
 
-.header-toolbar .profile-select option {
-  background: #667eea;
-  color: white;
+.profile-select:hover {
+  border-color: #667eea;
 }
 
-.header-toolbar .profile-select:hover {
-  background: rgba(255, 255, 255, 0.3);
-  border-color: rgba(255, 255, 255, 0.5);
-}
-
-.header-toolbar .profile-select:focus {
+.profile-select:focus {
   outline: none;
-  border-color: rgba(255, 255, 255, 0.7);
-  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.25);
+  border-color: #667eea;
+  box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.25);
 }
 
 .route-info {

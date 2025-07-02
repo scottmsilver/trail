@@ -3,7 +3,7 @@ import './App.css'
 import Map from './components/Map/Map'
 import SearchBox from './components/SearchBox/SearchBox'
 import AlgorithmDebug from './components/AlgorithmDebug/AlgorithmDebug'
-import AdvancedSettings from './components/AdvancedSettings/AdvancedSettings'
+import CalibrationToolbar from './components/CalibrationToolbar/CalibrationToolbar'
 import api from './services/api'
 import type { Coordinate, RouteResult, RouteOptions } from './services/api'
 
@@ -188,40 +188,36 @@ function App() {
   return (
     <div className="app">
       <header className="app-header">
-        <div className="header-main">
-          <div className="header-title">
-            <h1>Trail Finder</h1>
-            <p>Find the optimal hiking route between two points</p>
-          </div>
-          <div className="header-toolbar">
-            <div className="profile-selector">
-              <label htmlFor="user-profile">User Profile: </label>
-              <select 
-                id="user-profile"
-                value={userProfile} 
-                onChange={(e) => {
-                  setUserProfile(e.target.value)
-                  setRouteOptions({...routeOptions, userProfile: e.target.value})
-                }}
-                className="profile-select"
-              >
-                <option value="default">Default</option>
-                <option value="easy">Easy Hiker</option>
-                <option value="experienced">Experienced Hiker</option>
-                <option value="trail_runner">Trail Runner</option>
-                <option value="accessibility">Accessibility Focused</option>
-              </select>
-            </div>
-            <AdvancedSettings 
-              options={routeOptions} 
-              onChange={setRouteOptions} 
-            />
-          </div>
-        </div>
+        <h1>Trail Finder</h1>
+        <p>Find the optimal hiking route between two points</p>
       </header>
       
       <main className="app-main">
         <div className="controls">
+          <div className="profile-selector">
+            <label htmlFor="user-profile">User Profile: </label>
+            <select 
+              id="user-profile"
+              value={userProfile} 
+              onChange={(e) => {
+                setUserProfile(e.target.value)
+                setRouteOptions({...routeOptions, userProfile: e.target.value})
+              }}
+              className="profile-select"
+            >
+              <option value="default">Default</option>
+              <option value="easy">Easy Hiker</option>
+              <option value="experienced">Experienced Hiker</option>
+              <option value="trail_runner">Trail Runner</option>
+              <option value="accessibility">Accessibility Focused</option>
+            </select>
+          </div>
+
+          <CalibrationToolbar 
+            options={routeOptions} 
+            onChange={setRouteOptions} 
+          />
+          
           <div className="status">{status || 'Click on the map to set start point.'}</div>
           
           <div className="coordinates">
