@@ -188,8 +188,36 @@ function App() {
   return (
     <div className="app">
       <header className="app-header">
-        <h1>Trail Finder</h1>
-        <p>Find the optimal hiking route between two points</p>
+        <div className="header-main">
+          <div className="header-title">
+            <h1>Trail Finder</h1>
+            <p>Find the optimal hiking route between two points</p>
+          </div>
+          <div className="header-toolbar">
+            <div className="profile-selector">
+              <label htmlFor="user-profile">User Profile: </label>
+              <select 
+                id="user-profile"
+                value={userProfile} 
+                onChange={(e) => {
+                  setUserProfile(e.target.value)
+                  setRouteOptions({...routeOptions, userProfile: e.target.value})
+                }}
+                className="profile-select"
+              >
+                <option value="default">Default</option>
+                <option value="easy">Easy Hiker</option>
+                <option value="experienced">Experienced Hiker</option>
+                <option value="trail_runner">Trail Runner</option>
+                <option value="accessibility">Accessibility Focused</option>
+              </select>
+            </div>
+            <AdvancedSettings 
+              options={routeOptions} 
+              onChange={setRouteOptions} 
+            />
+          </div>
+        </div>
       </header>
       
       <main className="app-main">
@@ -204,30 +232,6 @@ function App() {
               <div>End: {end.lat.toFixed(4)}, {end.lon.toFixed(4)}</div>
             )}
           </div>
-          
-          <div className="profile-selector">
-            <label htmlFor="user-profile">User Profile: </label>
-            <select 
-              id="user-profile"
-              value={userProfile} 
-              onChange={(e) => {
-                setUserProfile(e.target.value)
-                setRouteOptions({...routeOptions, userProfile: e.target.value})
-              }}
-              className="profile-select"
-            >
-              <option value="default">Default</option>
-              <option value="easy">Easy Hiker</option>
-              <option value="experienced">Experienced Hiker</option>
-              <option value="trail_runner">Trail Runner</option>
-              <option value="accessibility">Accessibility Focused</option>
-            </select>
-          </div>
-          
-          <AdvancedSettings 
-            options={routeOptions} 
-            onChange={setRouteOptions} 
-          />
           
           <div className="buttons">
             <button 

@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useRef, useEffect } from 'react'
 import { ChevronDownIcon, ChevronUpIcon } from '@heroicons/react/24/outline'
 import type { RouteOptions, SlopeConfig, CustomPathCosts } from '../../services/api'
 import './AdvancedSettings.css'
@@ -24,6 +24,23 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ options, onChange }
     residential: 0.7,
     off_path: 1.0
   })
+  const dropdownRef = useRef<HTMLDivElement>(null)
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsOpen(false)
+      }
+    }
+
+    if (isOpen) {
+      document.addEventListener('mousedown', handleClickOutside)
+      return () => {
+        document.removeEventListener('mousedown', handleClickOutside)
+      }
+    }
+  }, [isOpen])
 
   const updateOptions = (updates: Partial<RouteOptions>) => {
     onChange({ ...options, ...updates })
@@ -90,7 +107,7 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ options, onChange }
   }
 
   return (
-    <div className="advanced-settings">
+    <div className="advanced-settings" ref={dropdownRef}>
       <button
         className="advanced-settings-toggle"
         onClick={() => setIsOpen(!isOpen)}

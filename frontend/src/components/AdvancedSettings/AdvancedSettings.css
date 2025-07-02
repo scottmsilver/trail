@@ -1,27 +1,48 @@
 .advanced-settings {
-  margin-top: 1rem;
-  border: 1px solid #e5e7eb;
-  border-radius: 0.5rem;
-  background-color: #f9fafb;
+  position: relative;
+}
+
+/* Styles for when in header toolbar */
+.header-toolbar .advanced-settings {
+  margin: 0;
 }
 
 .advanced-settings-toggle {
-  width: 100%;
-  padding: 0.75rem 1rem;
+  padding: 0.5rem 1rem;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  background: none;
-  border: none;
+  gap: 0.5rem;
+  background: rgba(255, 255, 255, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 0.375rem;
   cursor: pointer;
   font-size: 0.875rem;
   font-weight: 500;
-  color: #374151;
-  transition: background-color 0.2s;
+  color: white;
+  transition: all 0.2s;
+  backdrop-filter: blur(10px);
 }
 
 .advanced-settings-toggle:hover {
-  background-color: #f3f4f6;
+  background: rgba(255, 255, 255, 0.3);
+  border-color: rgba(255, 255, 255, 0.5);
+}
+
+/* Dropdown content for header toolbar */
+.header-toolbar .advanced-settings-content {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 0.5rem;
+  width: 450px;
+  max-width: calc(100vw - 2rem);
+  background: white;
+  border-radius: 0.5rem;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1), 0 4px 6px rgba(0, 0, 0, 0.05);
+  z-index: 1000;
+  color: #374151;
+  max-height: calc(100vh - 100px);
+  overflow-y: auto;
 }
 
 .advanced-settings-toggle .icon {
