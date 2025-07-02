@@ -21,6 +21,11 @@ function App() {
   const [routeOptions, setRouteOptions] = useState<RouteOptions>({ userProfile: 'default' })
 
   const handleMapClick = (coord: Coordinate) => {
+    // If a route has been found, don't accept new clicks
+    if (route) {
+      return
+    }
+    
     if (!start) {
       setStart(coord)
       setStatus('Start point set. Click to set end point.')
