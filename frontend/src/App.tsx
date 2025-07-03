@@ -19,6 +19,7 @@ function App() {
   const [debugLoading, setDebugLoading] = useState(false)
   const [userProfile, setUserProfile] = useState<string>('default')
   const [routeOptions, setRouteOptions] = useState<RouteOptions>({ userProfile: 'default' })
+  const [routeTime, setRouteTime] = useState<number | null>(null)
 
   const handleMapClick = (coord: Coordinate) => {
     // If a route has been found, don't accept new clicks
@@ -46,6 +47,7 @@ function App() {
 
     setLoading(true)
     setStatus('Calculating route...')
+    const startTime = performance.now()
     
     try {
       // Use the imported api instance with all route options
@@ -62,9 +64,13 @@ function App() {
         if (status.status === 'completed') {
           try {
             const routeData = await api.getRoute(response.routeId)
+            const endTime = performance.now()
+            const timeTaken = (endTime - startTime) / 1000 // Convert to seconds
+            setRouteTime(timeTaken)
             console.log('Route data:', routeData)
             setRoute(routeData)
-            setStatus(`Route found! Distance: ${routeData.stats.distance_km}km`)
+            const distanceMiles = (routeData.stats.distance_km * 0.621371).toFixed(2)
+            setStatus(`Route found! Distance: ${distanceMiles} miles (${timeTaken.toFixed(1)}s)`)
           } catch (err) {
             console.error('Error getting route:', err)
             setStatus('Error getting route data')
@@ -90,9 +96,13 @@ function App() {
 
     setDebugLoading(true)
     setStatus('Calculating route with debug info...')
+    const startTime = performance.now()
     
     try {
       const debugResult: RouteResult = await api.calculateDebugRoute(start, end, routeOptions)
+      const endTime = performance.now()
+      const timeTaken = (endTime - startTime) / 1000 // Convert to seconds
+      setRouteTime(timeTaken)
       console.log('Debug result:', debugResult)
       console.log('Debug result stats:', debugResult.stats)
       console.log('Debug data present:', !!debugResult.stats?.debug_data)
@@ -104,9 +114,11 @@ function App() {
       if (debugResult.stats && debugResult.stats.debug_data) {
         setDebugData(debugResult.stats.debug_data)
         setShowDebug(true)
-        setStatus(`Debug route found! Distance: ${debugResult.stats.distance_km}km - Check debug panel`)
+        const distanceMiles = (debugResult.stats.distance_km * 0.621371).toFixed(2)
+        setStatus(`Debug route found! Distance: ${distanceMiles} miles (${timeTaken.toFixed(1)}s) - Check debug panel`)
       } else {
-        setStatus(`Debug route found! Distance: ${debugResult.stats?.distance_km || 'N/A'}km (no debug data available)`)
+        const distanceMiles = ((debugResult.stats?.distance_km || 0) * 0.621371).toFixed(2)
+        setStatus(`Debug route found! Distance: ${distanceMiles} miles (${timeTaken.toFixed(1)}s) (no debug data available)`)
         console.warn('Debug route completed but no debug data returned:', debugResult)
         console.warn('Stats object:', debugResult.stats)
       }
@@ -124,6 +136,7 @@ function App() {
     setRoute(null)
     setDebugData(null)
     setShowDebug(false)
+    setRouteTime(null)
     setStatus('Click on the map to set start point.')
   }
 
@@ -221,11 +234,39 @@ function App() {
           <div className="status">{status || 'Click on the map to set start point.'}</div>
           
           <div className="coordinates">
-            {start && (
-              <div>Start: {start.lat.toFixed(4)}, {start.lon.toFixed(4)}</div>
-            )}
-            {end && (
-              <div>End: {end.lat.toFixed(4)}, {end.lon.toFixed(4)}</div>
+            {(start || end) && (
+              <>
+                {start && end && (
+                  <button 
+                    className="copy-coords-btn"
+                    onClick={() => {
+                      const coordsText = `"Start: ${start.lat.toFixed(4)}, ${start.lon.toFixed(4)}" "End: ${end.lat.toFixed(4)}, ${end.lon.toFixed(4)}"`
+                      navigator.clipboard.writeText(coordsText)
+                      setStatus('Coordinates copied to clipboard in CLI format!')
+                    }}
+                    title="Copy coordinates for route_cli.py"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                    </svg>
+                  </button>
+                )}
+                <div className="coord-list">
+                  {start && (
+                    <div className="coord-item">
+                      <span className="coord-label">Start</span>
+                      <span className="coord-value">{start.lat.toFixed(4)}, {start.lon.toFixed(4)}</span>
+                    </div>
+                  )}
+                  {end && (
+                    <div className="coord-item">
+                      <span className="coord-label">End</span>
+                      <span className="coord-value">{end.lat.toFixed(4)}, {end.lon.toFixed(4)}</span>
+                    </div>
+                  )}
+                </div>
+              </>
             )}
           </div>
           
@@ -255,10 +296,11 @@ function App() {
             <div className="route-info">
               <h3>Route Information</h3>
               <ul>
-                <li>Distance: {route.stats.distance_km} km</li>
+                <li>Distance: {(route.stats.distance_km * 0.621371).toFixed(2)} miles ({route.stats.distance_km} km)</li>
                 <li>Estimated time: {route.stats.estimated_time_min} min</li>
                 <li>Difficulty: {route.stats.difficulty}</li>
                 <li>Waypoints: {route.path.length}</li>
+                {routeTime && <li>Calculation time: {routeTime.toFixed(1)}s</li>}
               </ul>
               <button 
                 onClick={exportGPX} 

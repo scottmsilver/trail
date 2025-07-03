@@ -6,6 +6,7 @@ from typing import Dict
 import asyncio
 import logging
 import numpy as np
+import os
 
 from app.models.route import (
     RouteRequest, RouteResponse, RouteStatus, 
@@ -37,9 +38,76 @@ app.add_middleware(
 # In-memory storage for now (will be replaced with Redis)
 routes_storage: Dict[str, dict] = {}
 
-# Initialize trail finder services
-trail_finder = TrailFinderService()
-debug_trail_finder = TrailFinderService(debug_mode=True)
+# Create shared DEM cache for all trail finder instances
+logger.info("Creating shared DEM caches...")
+
+# Log HTTP cache location
+http_cache_path = os.environ.get('HYRIVER_CACHE_NAME', os.path.abspath('cache/aiohttp_cache.sqlite'))
+if not os.path.isabs(http_cache_path):
+    http_cache_path = os.path.abspath(http_cache_path)
+
+if os.path.exists(http_cache_path):
+    cache_size_mb = os.path.getsize(http_cache_path) / (1024 * 1024)
+    logger.info(f"HTTP cache location: {http_cache_path} ({cache_size_mb:.1f} MB)")
+else:
+    logger.info(f"HTTP cache will be created at: {http_cache_path}")
+
+shared_dem_cache = DEMTileCache(debug_mode=False)
+shared_debug_dem_cache = DEMTileCache(debug_mode=True)
+logger.info("Shared DEM caches created")
+
+# Initialize trail finder services with shared caches
+trail_finder = TrailFinderService(dem_cache=shared_dem_cache)
+debug_trail_finder = TrailFinderService(debug_mode=True, dem_cache=shared_debug_dem_cache)
+
+# Preload popular areas on startup (optional)
+PRELOAD_AREAS = [
+    # Park City, UT
+    {
+        "name": "Park City, UT",
+        "bounds": {
+            "min_lat": 40.5961,
+            "max_lat": 40.6961,
+            "min_lon": -111.5480,
+            "max_lon": -111.4480
+        }
+    },
+    # Add more areas as needed
+]
+
+async def preload_areas():
+    """Preload popular areas on startup"""
+    for area in PRELOAD_AREAS:
+        try:
+            logger.info(f"Preloading area: {area['name']}")
+            bounds = area['bounds']
+            
+            # Download terrain
+            result = trail_finder.dem_cache.predownload_area(
+                bounds['min_lat'], bounds['max_lat'], 
+                bounds['min_lon'], bounds['max_lon']
+            )
+            
+            if result['status'] == 'success':
+                # Preprocess
+                preprocess_result = trail_finder.dem_cache.preprocess_area(
+                    bounds['min_lat'], bounds['max_lat'],
+                    bounds['min_lon'], bounds['max_lon']
+                )
+                logger.info(f"Preloaded {area['name']}: {preprocess_result['status']}")
+            else:
+                logger.warning(f"Failed to preload {area['name']}: {result}")
+                
+        except Exception as e:
+            logger.error(f"Error preloading {area['name']}: {str(e)}")
+
+# Run preloading in background after startup
+@app.on_event("startup")
+async def startup_event():
+    """Run tasks on startup"""
+    import asyncio
+    # Run preloading in background so it doesn't block startup
+    asyncio.create_task(preload_areas())
 
 
 def get_obstacle_config_for_profile(profile: str):
@@ -150,10 +218,11 @@ async def process_route(route_id: str, request: RouteRequest):
         profile = request.options.userProfile if request.options else "default"
         obstacle_config, path_preferences = get_configs_for_profile(profile, request.options)
         
-        # Create trail finder with user's configurations
+        # Create trail finder with user's configurations and shared cache
         profile_trail_finder = TrailFinderService(
             obstacle_config=obstacle_config,
-            path_preferences=path_preferences
+            path_preferences=path_preferences,
+            dem_cache=shared_dem_cache
         )
         
         # Validate request
@@ -321,10 +390,11 @@ async def export_route_as_gpx(request: RouteRequest):
     profile = request.options.userProfile if request.options else "default"
     obstacle_config, path_preferences = get_configs_for_profile(profile, request.options)
     
-    # Create trail finder with user's configurations
+    # Create trail finder with user's configurations and shared cache
     profile_trail_finder = TrailFinderService(
         obstacle_config=obstacle_config,
-        path_preferences=path_preferences
+        path_preferences=path_preferences,
+        dem_cache=shared_dem_cache
     )
     
     # Find the route
@@ -391,8 +461,8 @@ async def get_terrain_slopes(bounds: dict):
         if not all([min_lat, max_lat, min_lon, max_lon]):
             raise HTTPException(status_code=400, detail="Invalid bounds")
         
-        # Create a DEM cache instance
-        dem_cache = DEMTileCache()
+        # Use shared DEM cache instance
+        dem_cache = shared_dem_cache
         
         # Download DEM data for the area
         dem_file = dem_cache.download_dem(min_lat, max_lat, min_lon, max_lon)
@@ -469,6 +539,83 @@ async def get_terrain_slopes(bounds: dict):
         raise HTTPException(status_code=500, detail=f"Error processing terrain data: {str(e)}")
 
 
+@app.post("/api/cache/predownload")
+async def predownload_area(bounds: dict):
+    """Pre-download terrain data for a specific area"""
+    try:
+        min_lat = bounds.get("minLat")
+        max_lat = bounds.get("maxLat")
+        min_lon = bounds.get("minLon")
+        max_lon = bounds.get("maxLon")
+        
+        if not all([min_lat, max_lat, min_lon, max_lon]):
+            raise HTTPException(status_code=400, detail="Invalid bounds")
+        
+        # Use the global trail_finder's cache or create a dedicated one
+        result = trail_finder.dem_cache.predownload_area(
+            min_lat, max_lat, min_lon, max_lon
+        )
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error pre-downloading area: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error pre-downloading area: {str(e)}")
+
+
+@app.post("/api/cache/preprocess")
+async def preprocess_area(bounds: dict, force: bool = False):
+    """Preprocess terrain data for faster pathfinding"""
+    try:
+        min_lat = bounds.get("minLat")
+        max_lat = bounds.get("maxLat")
+        min_lon = bounds.get("minLon")
+        max_lon = bounds.get("maxLon")
+        
+        if not all([min_lat, max_lat, min_lon, max_lon]):
+            raise HTTPException(status_code=400, detail="Invalid bounds")
+        
+        # Use the global trail_finder's cache
+        result = trail_finder.dem_cache.preprocess_area(
+            min_lat, max_lat, min_lon, max_lon, force=force
+        )
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error preprocessing area: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error preprocessing area: {str(e)}")
+
+
+@app.get("/api/cache/status")
+async def get_cache_status():
+    """Get current cache status and statistics"""
+    try:
+        # Get cache status from both trail finders
+        normal_status = trail_finder.dem_cache.get_cache_status()
+        debug_status = debug_trail_finder.dem_cache.get_cache_status()
+        
+        # Combine the statistics
+        return {
+            "normal_cache": normal_status,
+            "debug_cache": debug_status,
+            "combined": {
+                "total_memory_mb": normal_status["total_memory_mb"] + debug_status["total_memory_mb"],
+                "total_terrain_entries": normal_status["terrain_cache"]["count"] + debug_status["terrain_cache"]["count"],
+                "total_cost_surface_entries": normal_status["cost_surface_cache"]["count"] + debug_status["cost_surface_cache"]["count"],
+                "total_preprocessing_entries": normal_status["preprocessing_cache"]["count"] + debug_status["preprocessing_cache"]["count"]
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting cache status: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting cache status: {str(e)}")
+
+
 @app.post("/api/routes/debug", response_model=RouteResult)
 async def calculate_debug_route(request: RouteRequest):
     """Calculate route with debug information"""
@@ -477,11 +624,12 @@ async def calculate_debug_route(request: RouteRequest):
         profile = request.options.userProfile if request.options else "default"
         obstacle_config, path_preferences = get_configs_for_profile(profile, request.options)
         
-        # Create debug trail finder with user's configurations
+        # Create debug trail finder with user's configurations and shared debug cache
         profile_debug_finder = TrailFinderService(
             debug_mode=True, 
             obstacle_config=obstacle_config,
-            path_preferences=path_preferences
+            path_preferences=path_preferences,
+            dem_cache=shared_debug_dem_cache
         )
         
         # Find the route with debug mode enabled

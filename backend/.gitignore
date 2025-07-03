@@ -31,9 +31,13 @@ env/
 *.swp
 *.swo
 
-# Cache directories
+# Cache and data directories
 cache/
 dem_data/
+tile_cache/
+precomputed_cache/
+*.sqlite
+*.db
 
 # Environment variables
 .env
@@ -45,3 +49,33 @@ dem_data/
 # OS
 .DS_Store
 Thumbs.db
+
+# Test and benchmark artifacts (root directory only)
+/test_*.py
+/benchmark_*.py
+/*_benchmark.py
+/debug_*.py
+/analyze_*.py
+/create_*.py
+/fix_*.py
+/inspect_*.py
+/monitor*.py
+/prec*.py
+/quick_*.py
+/real_*.py
+/route_cli*.py
+/simple_*.py
+/synthetic_*.py
+
+# Test output files
+*.png
+*.csv
+*.json
+!requirements.json
+!package.json
+!tsconfig.json
+
+# Documentation (except README and CLAUDE)
+*.md
+!README.md
+!CLAUDE.md

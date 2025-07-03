@@ -13,18 +13,26 @@ class TrailFinderService:
     """Service for finding hiking trails between coordinates"""
     
     def __init__(self, buffer: float = 0.05, debug_mode: bool = False, 
-                 obstacle_config: ObstacleConfig = None, path_preferences: PathPreferences = None):
+                 obstacle_config: ObstacleConfig = None, path_preferences: PathPreferences = None,
+                 dem_cache: DEMTileCache = None):
         self.buffer = buffer
         self.max_distance_km = 50  # Maximum allowed distance between points
         self.debug_mode = debug_mode
         self.obstacle_config = obstacle_config
         self.path_preferences = path_preferences
-        self.dem_cache = DEMTileCache(
-            buffer=buffer, 
-            debug_mode=debug_mode, 
-            obstacle_config=obstacle_config,
-            path_preferences=path_preferences
-        )
+        
+        # Use provided cache or create a new one
+        if dem_cache is not None:
+            self.dem_cache = dem_cache
+            logger.info(f"TrailFinderService using shared DEM cache")
+        else:
+            self.dem_cache = DEMTileCache(
+                buffer=buffer, 
+                debug_mode=debug_mode, 
+                obstacle_config=obstacle_config,
+                path_preferences=path_preferences
+            )
+            logger.info(f"TrailFinderService created new DEM cache")
         logger.info(f"TrailFinderService initialized with debug_mode={debug_mode}")
     
     def validate_route_request(self, start: Coordinate, end: Coordinate) -> bool:
@@ -124,9 +132,11 @@ class TrailFinderService:
                 # Calculate elevation gain from slope data if available
                 if isinstance(path_coords[i-1], dict) and 'elevation' in path_coords[i-1]:
                     if i < len(path_coords) and isinstance(path_coords[i], dict) and 'elevation' in path_coords[i]:
-                        elevation_change = path_coords[i]['elevation'] - path_coords[i-1]['elevation']
-                        if elevation_change > 0:
-                            total_elevation_gain += elevation_change
+                        # Check that both elevations are not None
+                        if path_coords[i]['elevation'] is not None and path_coords[i-1]['elevation'] is not None:
+                            elevation_change = path_coords[i]['elevation'] - path_coords[i-1]['elevation']
+                            if elevation_change > 0:
+                                total_elevation_gain += elevation_change
                         
                         if 'slope' in path_coords[i-1]:
                             max_slope = max(max_slope, abs(path_coords[i-1]['slope']))

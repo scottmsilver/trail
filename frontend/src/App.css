@@ -51,15 +51,75 @@
 }
 
 .coordinates {
-  padding: 0.75rem;
-  background: #f3f4f6;
-  border-radius: 4px;
-  font-family: monospace;
-  font-size: 0.875rem;
+  position: relative;
+  padding: 0.625rem;
+  background: #fafbfc;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  min-height: 40px;
 }
 
-.coordinates div {
-  margin: 0.25rem 0;
+.copy-coords-btn {
+  position: absolute;
+  top: 0.375rem;
+  right: 0.375rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.25rem;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: #9ca3af;
+  cursor: pointer;
+  transition: all 0.15s;
+  width: auto;
+  flex: none;
+}
+
+.copy-coords-btn:hover {
+  background: #ffffff;
+  border-color: #e5e7eb;
+  color: #6b7280;
+}
+
+.copy-coords-btn:active {
+  background: #f3f4f6;
+  transform: scale(0.95);
+}
+
+.copy-coords-btn svg {
+  width: 12px;
+  height: 12px;
+}
+
+.coord-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+
+.coord-item {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.coord-label {
+  font-weight: 600;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+  font-size: 0.625rem;
+  min-width: 2.5rem;
+}
+
+.coord-value {
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+  color: #374151;
+  font-size: 0.75rem;
+  letter-spacing: -0.025em;
 }
 
 .buttons {
@@ -168,6 +228,17 @@ button {
 
 .route-info li {
   margin: 0.25rem 0;
+}
+
+.btn-export {
+  margin-top: 1rem;
+  background: #10b981;
+  color: white;
+  width: 100%;
+}
+
+.btn-export:hover {
+  background: #059669;
 }
 
 .map-wrapper {
