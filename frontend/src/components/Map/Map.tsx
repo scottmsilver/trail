@@ -31,6 +31,7 @@ interface MapProps {
   pathWithSlopes?: any[]  // Path with slope data from backend
   center?: { lat: number; lon: number }
   onMapClick?: (coord: Coordinate) => void
+  onMapReady?: (map: L.Map) => void
 }
 
 function MapClickHandler({ onMapClick }: { onMapClick?: (coord: Coordinate) => void }) {
@@ -85,14 +86,30 @@ function TerrainSlopesController({ setShowSlopes }: { setShowSlopes: (show: bool
 }
 
 
-export default function Map({ start, end, path, pathWithSlopes, center, onMapClick }: MapProps) {
+// Component to handle map ready callback
+function MapReadyHandler({ onMapReady }: { onMapReady?: (map: L.Map) => void }) {
+  const map = useMap();
+  
+  useEffect(() => {
+    if (onMapReady && map) {
+      onMapReady(map);
+    }
+  }, [map, onMapReady]);
+  
+  return null;
+}
+
+export default function Map({ start, end, path, pathWithSlopes, center, onMapClick, onMapReady }: MapProps) {
   // Default center (Utah area)
   const defaultCenter: LatLngExpression = [40.640, -111.570]
   const zoom = 13
   const [showSlopes, setShowSlopes] = useState(false)
 
   return (
-    <MapContainer center={defaultCenter} zoom={zoom} className="map-container">
+    <MapContainer 
+      center={defaultCenter} 
+      zoom={zoom} 
+      className="map-container">
       <LayersControl position="topright">
         {/* Base Layers */}
         <LayersControl.BaseLayer checked name="Street Map">
@@ -175,6 +192,7 @@ export default function Map({ start, end, path, pathWithSlopes, center, onMapCli
       )}
 
       <MapClickHandler onMapClick={onMapClick} />
+      <MapReadyHandler onMapReady={onMapReady} />
       <MapCenterController center={center} />
     </MapContainer>
   )

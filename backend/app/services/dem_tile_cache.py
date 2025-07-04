@@ -5,6 +5,8 @@ import rasterio
 from rasterio.merge import merge
 from rasterio.plot import show
 from rasterio.features import rasterize
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend
 # import matplotlib.pyplot as plt  # Not needed in backend
 from pyproj import Transformer
 import requests
@@ -1013,6 +1015,7 @@ class DEMTileCache:
             neighbor_evaluations = []
             
             # Use preprocessed neighbors if available
+            preprocessed_data = None  # Not available in this version
             if preprocessed_data and current in preprocessed_data['neighbor_map']:
                 # Use precomputed neighbors
                 for neighbor, base_distance in preprocessed_data['neighbor_map'][current]:
@@ -1056,72 +1059,72 @@ class DEMTileCache:
                         if neighbor in closed_set:
                             continue
 
-                    # Calculate tentative g_score
-                    distance = sqrt((dy * out_trans.e) ** 2 + (dx * out_trans.a) ** 2)
-                    terrain_cost = cost_surface[row_neighbor, col_neighbor]
-                    movement_cost = terrain_cost * distance
-                    tentative_g_score = g_score[current] + movement_cost
-                    heuristic_cost = self.heuristic(neighbor, end_idx, indices.shape, out_trans)
-                    tentative_f_score = tentative_g_score + heuristic_cost
+                        # Calculate tentative g_score
+                        distance = sqrt((dy * out_trans.e) ** 2 + (dx * out_trans.a) ** 2)
+                        terrain_cost = cost_surface[row_neighbor, col_neighbor]
+                        movement_cost = terrain_cost * distance
+                        tentative_g_score = g_score[current] + movement_cost
+                        heuristic_cost = self.heuristic(neighbor, end_idx, indices.shape, out_trans)
+                        tentative_f_score = tentative_g_score + heuristic_cost
 
-                    # Record neighbor evaluation in debug mode
-                    if self.debug_mode:
-                        # Get elevation data for slope calculation
-                        if dem is not None:
-                            current_elevation = dem[row_current, col_current] if 0 <= row_current < dem.shape[0] and 0 <= col_current < dem.shape[1] else 0
-                            neighbor_elevation = dem[row_neighbor, col_neighbor] if 0 <= row_neighbor < dem.shape[0] and 0 <= col_neighbor < dem.shape[1] else 0
-                        else:
-                            current_elevation = 0
-                            neighbor_elevation = 0
-                        elevation_change = neighbor_elevation - current_elevation
-                        slope_degrees = np.degrees(np.arctan(abs(elevation_change) / max(distance, 0.1)))
-                        
-                        # Break down the terrain cost components
-                        base_cost = 1.0  # Base movement cost
-                        slope_penalty = max(0, terrain_cost - base_cost)  # Additional cost due to slope/obstacles
-                        
-                        neighbor_evaluations.append({
-                            'neighbor_idx': neighbor,
-                            'row': row_neighbor,
-                            'col': col_neighbor,
-                            'direction': (dy, dx),
-                            'direction_name': self._get_direction_name(dy, dx),
-                            'distance_meters': distance,
-                            'elevation_change_m': elevation_change,
-                            'slope_degrees': slope_degrees,
-                            'terrain_breakdown': {
-                                'base_cost': base_cost,
-                                'slope_penalty': slope_penalty,
-                                'total_terrain_cost': terrain_cost,
-                                'is_obstacle': terrain_cost > 100  # High cost indicates obstacle
-                            },
-                            'cost_breakdown': {
-                                'distance_component': distance,
-                                'terrain_component': terrain_cost,
-                                'total_movement_cost': movement_cost,
-                                'explanation': f"movement_cost = terrain_cost({terrain_cost:.2f}) × distance({distance:.1f}m) = {movement_cost:.2f}"
-                            },
-                            'g_score_breakdown': {
-                                'previous_g_score': g_score[current],
-                                'movement_cost': movement_cost,
-                                'tentative_g_score': tentative_g_score,
-                                'explanation': f"g_score = previous({g_score[current]:.2f}) + movement_cost({movement_cost:.2f}) = {tentative_g_score:.2f}"
-                            },
-                            'f_score_breakdown': {
-                                'g_score': tentative_g_score,
-                                'h_score': heuristic_cost,
-                                'f_score': tentative_f_score,
-                                'explanation': f"f_score = g_score({tentative_g_score:.2f}) + h_score({heuristic_cost:.2f}) = {tentative_f_score:.2f}"
-                            },
-                            'current_g_score': g_score[neighbor],
-                            'is_improvement': tentative_g_score < g_score[neighbor]
-                        })
+                        # Record neighbor evaluation in debug mode
+                        if self.debug_mode:
+                            # Get elevation data for slope calculation
+                            if dem is not None:
+                                current_elevation = dem[row_current, col_current] if 0 <= row_current < dem.shape[0] and 0 <= col_current < dem.shape[1] else 0
+                                neighbor_elevation = dem[row_neighbor, col_neighbor] if 0 <= row_neighbor < dem.shape[0] and 0 <= col_neighbor < dem.shape[1] else 0
+                            else:
+                                current_elevation = 0
+                                neighbor_elevation = 0
+                            elevation_change = neighbor_elevation - current_elevation
+                            slope_degrees = np.degrees(np.arctan(abs(elevation_change) / max(distance, 0.1)))
+                            
+                            # Break down the terrain cost components
+                            base_cost = 1.0  # Base movement cost
+                            slope_penalty = max(0, terrain_cost - base_cost)  # Additional cost due to slope/obstacles
+                            
+                            neighbor_evaluations.append({
+                                'neighbor_idx': neighbor,
+                                'row': row_neighbor,
+                                'col': col_neighbor,
+                                'direction': (dy, dx),
+                                'direction_name': self._get_direction_name(dy, dx),
+                                'distance_meters': distance,
+                                'elevation_change_m': elevation_change,
+                                'slope_degrees': slope_degrees,
+                                'terrain_breakdown': {
+                                    'base_cost': base_cost,
+                                    'slope_penalty': slope_penalty,
+                                    'total_terrain_cost': terrain_cost,
+                                    'is_obstacle': terrain_cost > 100  # High cost indicates obstacle
+                                },
+                                'cost_breakdown': {
+                                    'distance_component': distance,
+                                    'terrain_component': terrain_cost,
+                                    'total_movement_cost': movement_cost,
+                                    'explanation': f"movement_cost = terrain_cost({terrain_cost:.2f}) × distance({distance:.1f}m) = {movement_cost:.2f}"
+                                },
+                                'g_score_breakdown': {
+                                    'previous_g_score': g_score[current],
+                                    'movement_cost': movement_cost,
+                                    'tentative_g_score': tentative_g_score,
+                                    'explanation': f"g_score = previous({g_score[current]:.2f}) + movement_cost({movement_cost:.2f}) = {tentative_g_score:.2f}"
+                                },
+                                'f_score_breakdown': {
+                                    'g_score': tentative_g_score,
+                                    'h_score': heuristic_cost,
+                                    'f_score': tentative_f_score,
+                                    'explanation': f"f_score = g_score({tentative_g_score:.2f}) + h_score({heuristic_cost:.2f}) = {tentative_f_score:.2f}"
+                                },
+                                'current_g_score': g_score[neighbor],
+                                'is_improvement': tentative_g_score < g_score[neighbor]
+                            })
 
-                    if tentative_g_score < g_score[neighbor]:
-                        came_from[neighbor] = current
-                        g_score[neighbor] = tentative_g_score
-                        f_score[neighbor] = tentative_f_score
-                        heapq.heappush(open_set, (f_score[neighbor], neighbor))
+                        if tentative_g_score < g_score[neighbor]:
+                            came_from[neighbor] = current
+                            g_score[neighbor] = tentative_g_score
+                            f_score[neighbor] = tentative_f_score
+                            heapq.heappush(open_set, (f_score[neighbor], neighbor))
 
             # Record decision point in debug mode
             if self.debug_mode:
@@ -1427,7 +1430,7 @@ class DEMTileCache:
                             self.debug_data['optimization_stats']['early_terminations'] += 1
                             elapsed = time.time() - start_time
                             print(f"Early termination after {step_count} iterations, {elapsed:.3f}s")
-                            print(f"Best node distance to goal: {best_h:.1f}")
+                            print(f"Best node distance to goal: {best_h_score:.1f}")
                         
                         # Don't actually terminate - this is what the benchmark must be doing
                         # to get full paths in 2.4 seconds
@@ -2293,8 +2296,10 @@ class DEMTileCache:
         
         cost_info = []
         for key, cache_data in self.cost_surface_cache.items():
-            # Handle both old (2-tuple) and new (3-tuple) cache formats
-            if len(cache_data) == 3:
+            # Handle both dict and tuple cache formats
+            if isinstance(cache_data, dict):
+                cost_surface = cache_data['cost_surface']
+            elif len(cache_data) == 3:
                 cost_surface, _, _ = cache_data
             else:
                 cost_surface, _ = cache_data

@@ -1,11 +1,13 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import './App.css'
 import Map from './components/Map/Map'
 import SearchBox from './components/SearchBox/SearchBox'
 import AlgorithmDebug from './components/AlgorithmDebug/AlgorithmDebug'
 import CalibrationToolbar from './components/CalibrationToolbar/CalibrationToolbar'
+import PrepopulateArea from './components/PrepopulateArea/PrepopulateArea'
 import api from './services/api'
 import type { Coordinate, RouteResult, RouteOptions } from './services/api'
+import L from 'leaflet'
 
 function App() {
   const [start, setStart] = useState<Coordinate | null>(null)
@@ -20,6 +22,8 @@ function App() {
   const [userProfile, setUserProfile] = useState<string>('default')
   const [routeOptions, setRouteOptions] = useState<RouteOptions>({ userProfile: 'default' })
   const [routeTime, setRouteTime] = useState<number | null>(null)
+  const [showPrepopulate, setShowPrepopulate] = useState(false)
+  const mapRef = useRef<L.Map | null>(null)
 
   const handleMapClick = (coord: Coordinate) => {
     // If a route has been found, don't accept new clicks
@@ -229,6 +233,7 @@ function App() {
           <CalibrationToolbar 
             options={routeOptions} 
             onChange={setRouteOptions} 
+            onPrepopulateClick={() => setShowPrepopulate(true)}
           />
           
           <div className="status">{status || 'Click on the map to set start point.'}</div>
@@ -321,8 +326,15 @@ function App() {
             pathWithSlopes={route?.stats?.path_with_slopes}
             center={mapCenter || undefined}
             onMapClick={handleMapClick}
+            onMapReady={(map) => { mapRef.current = map }}
           />
           <SearchBox onLocationSelect={handleLocationSelect} />
+          {showPrepopulate && mapRef.current && (
+            <PrepopulateArea 
+              map={mapRef.current} 
+              onClose={() => setShowPrepopulate(false)} 
+            />
+          )}
         </div>
       </main>
       

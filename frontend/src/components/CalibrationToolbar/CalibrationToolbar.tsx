@@ -6,9 +6,10 @@ import './CalibrationToolbar.css'
 interface CalibrationToolbarProps {
   options: RouteOptions
   onChange: (options: RouteOptions) => void
+  onPrepopulateClick?: () => void
 }
 
-const CalibrationToolbar: React.FC<CalibrationToolbarProps> = ({ options, onChange }) => {
+const CalibrationToolbar: React.FC<CalibrationToolbarProps> = ({ options, onChange, onPrepopulateClick }) => {
   const [activeTab, setActiveTab] = useState<'slopes' | 'paths' | null>(null)
   const [maxSlope, setMaxSlope] = useState<number>(45)
   const [pathCosts, setPathCosts] = useState<CustomPathCosts>({
@@ -79,6 +80,14 @@ const CalibrationToolbar: React.FC<CalibrationToolbarProps> = ({ options, onChan
         >
           Path Preferences
         </button>
+        {onPrepopulateClick && (
+          <button 
+            className="tab prepopulate-btn"
+            onClick={onPrepopulateClick}
+          >
+            Prepopulate Area
+          </button>
+        )}
       </div>
 
       {activeTab === 'slopes' && (

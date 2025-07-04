@@ -1,0 +1,1 @@
+# Make fixtures directory a package

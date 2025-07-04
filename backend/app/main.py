@@ -616,6 +616,93 @@ async def get_cache_status():
         raise HTTPException(status_code=500, detail=f"Error getting cache status: {str(e)}")
 
 
+@app.post("/api/cache/prepopulate-box")
+async def prepopulate_bounding_box(corners: dict):
+    """
+    Prepopulate cache for a bounding box area defined by two corner points.
+    
+    Request body:
+    {
+        "corner1": {"lat": 40.65, "lon": -111.57},
+        "corner2": {"lat": 40.66, "lon": -111.56}
+    }
+    """
+    try:
+        # Extract corners
+        corner1 = corners.get("corner1")
+        corner2 = corners.get("corner2")
+        
+        if not corner1 or not corner2:
+            raise HTTPException(status_code=400, detail="Both corner1 and corner2 are required")
+        
+        lat1 = corner1.get("lat")
+        lon1 = corner1.get("lon")
+        lat2 = corner2.get("lat")
+        lon2 = corner2.get("lon")
+        
+        if None in [lat1, lon1, lat2, lon2]:
+            raise HTTPException(status_code=400, detail="Invalid corner coordinates")
+        
+        # Calculate bounding box
+        min_lat = min(lat1, lat2)
+        max_lat = max(lat1, lat2)
+        min_lon = min(lon1, lon2)
+        max_lon = max(lon1, lon2)
+        
+        # Calculate area size
+        lat_diff = max_lat - min_lat
+        lon_diff = max_lon - min_lon
+        area_km2 = lat_diff * 111 * lon_diff * 111 * 0.7
+        
+        logger.info(f"Prepopulating area: ({min_lat:.4f}, {min_lon:.4f}) to ({max_lat:.4f}, {max_lon:.4f}), ~{area_km2:.1f} km²")
+        
+        # Get initial status
+        initial_status = trail_finder.dem_cache.get_cache_status()
+        
+        # Step 1: Download terrain data
+        result = trail_finder.dem_cache.predownload_area(min_lat, max_lat, min_lon, max_lon)
+        if result['status'] != 'success':
+            raise HTTPException(status_code=500, detail=f"Failed to download terrain: {result}")
+        
+        # Step 2: Preprocess the area (compute cost surfaces)
+        preprocess_result = trail_finder.dem_cache.preprocess_area(
+            min_lat, max_lat, min_lon, max_lon, force=False
+        )
+        
+        # Get final status
+        final_status = trail_finder.dem_cache.get_cache_status()
+        
+        # Calculate what was added
+        terrain_added = final_status["terrain_cache"]["count"] - initial_status["terrain_cache"]["count"]
+        cost_added = final_status["cost_surface_cache"]["count"] - initial_status["cost_surface_cache"]["count"]
+        memory_added = final_status["total_memory_mb"] - initial_status["total_memory_mb"]
+        
+        return {
+            "status": "success",
+            "area": {
+                "min_lat": min_lat,
+                "max_lat": max_lat,
+                "min_lon": min_lon,
+                "max_lon": max_lon,
+                "area_km2": round(area_km2, 1)
+            },
+            "cache_growth": {
+                "terrain_entries_added": terrain_added,
+                "cost_surfaces_added": cost_added,
+                "memory_added_mb": round(memory_added, 1)
+            },
+            "final_cache_status": final_status,
+            "download_result": result,
+            "preprocess_result": preprocess_result
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error prepopulating area: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error prepopulating area: {str(e)}")
+
+
 @app.post("/api/routes/debug", response_model=RouteResult)
 async def calculate_debug_route(request: RouteRequest):
     """Calculate route with debug information"""
