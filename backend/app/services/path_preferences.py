@@ -20,6 +20,10 @@ class PathPreferences:
     stick_to_paths: bool = True
     path_transition_penalty: float = 2.0  # Penalty for leaving a path
     
+    # Trail preference: higher values prefer natural trails over streets
+    # 1.0 = normal, 2.0 = strong trail preference, 0.5 = urban preference
+    trail_preference: float = 1.0
+    
     def __post_init__(self):
         """Set default values if not provided"""
         if self.path_costs is None:
@@ -47,7 +51,10 @@ class PathPreferences:
             'landuse': ['grass', 'meadow', 'recreation_ground', 'village_green'],
             
             # Designated routes
-            'route': ['hiking', 'foot', 'walking']
+            'route': ['hiking', 'foot', 'walking'],
+            
+            # Ski slopes (often used as trails in summer)
+            'piste:type': ['downhill', 'nordic', 'sled', 'hike', 'skitour', 'connection']
         }
     
     @staticmethod
@@ -67,6 +74,13 @@ class PathPreferences:
             'park': 0.45,
             'garden': 0.5,
             'beach': 0.6,      # Sandy areas
+            
+            # Ski slopes (summer hiking use)
+            'downhill': 0.45,   # Ski runs - grassy slopes in summer
+            'nordic': 0.35,     # Cross-country ski trails - often good summer trails
+            'hike': 0.3,        # Designated hiking on ski slopes
+            'skitour': 0.4,     # Ski touring routes
+            'connection': 0.5,  # Connecting paths between slopes
             
             # Okay: Dedicated pedestrian infrastructure (but still paved)
             'footway': 0.6,    # Sidewalks (less preferred than dirt)
@@ -90,14 +104,35 @@ class PathPreferences:
     def get_path_cost_multiplier(self, path_type: Optional[str]) -> float:
         """Get cost multiplier for a path type"""
         if path_type is None:
-            return self.path_costs.get('off_path', 1.0)
+            base_cost = self.path_costs.get('off_path', 1.0)
+        elif path_type in self.path_costs:
+            base_cost = self.path_costs[path_type]
+        else:
+            base_cost = self.path_costs.get('off_path', 1.0)
         
-        # Check for exact match
-        if path_type in self.path_costs:
-            return self.path_costs[path_type]
+        # Apply trail preference adjustment
+        if self.trail_preference != 1.0:
+            # Categorize path types
+            natural_paths = {'trail', 'path', 'track', 'bridleway', 'grass', 'meadow', 
+                           'nature_reserve', 'park', 'beach', 'off_path', 'downhill', 
+                           'nordic', 'hike', 'skitour'}
+            urban_paths = {'footway', 'pedestrian', 'cycleway', 'steps', 'living_street',
+                          'residential', 'service', 'unclassified', 'tertiary', 
+                          'secondary', 'primary'}
+            
+            if path_type in natural_paths:
+                # Reduce cost for natural paths when trail_preference > 1
+                adjustment = 1.0 / self.trail_preference
+            elif path_type in urban_paths:
+                # Increase cost for urban paths when trail_preference > 1
+                adjustment = self.trail_preference
+            else:
+                # No adjustment for unknown types
+                adjustment = 1.0
+                
+            return base_cost * adjustment
         
-        # Default to off-path cost
-        return self.path_costs.get('off_path', 1.0)
+        return base_cost
 
 
 class PathPreferencePresets:
@@ -154,7 +189,8 @@ class PathPreferencePresets:
                 'service': 0.95,
             },
             stick_to_paths=True,
-            path_transition_penalty=2.0
+            path_transition_penalty=2.0,
+            trail_preference=1.5  # Moderately prefer trails
         )
     
     @staticmethod

@@ -27,6 +27,8 @@ export interface RouteOptions {
   customSlopeCosts?: SlopeConfig[]
   customPathCosts?: CustomPathCosts
   maxSlope?: number
+  gradientPreference?: number
+  trailPreference?: number
 }
 
 export interface RouteResponse {

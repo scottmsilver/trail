@@ -10,7 +10,7 @@ interface CalibrationToolbarProps {
 }
 
 const CalibrationToolbar: React.FC<CalibrationToolbarProps> = ({ options, onChange, onPrepopulateClick }) => {
-  const [activeTab, setActiveTab] = useState<'slopes' | 'paths' | null>(null)
+  const [activeTab, setActiveTab] = useState<'preferences' | 'slopes' | 'paths' | null>(null)
   const [maxSlope, setMaxSlope] = useState<number>(45)
   const [pathCosts, setPathCosts] = useState<CustomPathCosts>({
     trail: 0.2,
@@ -18,6 +18,8 @@ const CalibrationToolbar: React.FC<CalibrationToolbarProps> = ({ options, onChan
     residential: 0.85,
     off_path: 0.5
   })
+  const [gradientPreference, setGradientPreference] = useState<number>(options.gradientPreference || 1.0)
+  const [trailPreference, setTrailPreference] = useState<number>(options.trailPreference || 1.0)
 
   const updateOptions = (updates: Partial<RouteOptions>) => {
     onChange({ ...options, ...updates })
@@ -32,6 +34,16 @@ const CalibrationToolbar: React.FC<CalibrationToolbarProps> = ({ options, onChan
     const newCosts = { ...pathCosts, [pathType]: value }
     setPathCosts(newCosts)
     updateOptions({ customPathCosts: newCosts })
+  }
+
+  const handleGradientPreferenceChange = (value: number) => {
+    setGradientPreference(value)
+    updateOptions({ gradientPreference: value })
+  }
+
+  const handleTrailPreferenceChange = (value: number) => {
+    setTrailPreference(value)
+    updateOptions({ trailPreference: value })
   }
 
   // Preset slope configurations
@@ -69,6 +81,12 @@ const CalibrationToolbar: React.FC<CalibrationToolbarProps> = ({ options, onChan
       
       <div className="toolbar-tabs">
         <button 
+          className={`tab ${activeTab === 'preferences' ? 'active' : ''}`}
+          onClick={() => setActiveTab(activeTab === 'preferences' ? null : 'preferences')}
+        >
+          Route Style
+        </button>
+        <button 
           className={`tab ${activeTab === 'slopes' ? 'active' : ''}`}
           onClick={() => setActiveTab(activeTab === 'slopes' ? null : 'slopes')}
         >
@@ -78,7 +96,7 @@ const CalibrationToolbar: React.FC<CalibrationToolbarProps> = ({ options, onChan
           className={`tab ${activeTab === 'paths' ? 'active' : ''}`}
           onClick={() => setActiveTab(activeTab === 'paths' ? null : 'paths')}
         >
-          Path Preferences
+          Path Costs
         </button>
         {onPrepopulateClick && (
           <button 
@@ -120,6 +138,68 @@ const CalibrationToolbar: React.FC<CalibrationToolbarProps> = ({ options, onChan
               <span>Gentle</span>
               <span>Steep</span>
               <span>Extreme</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'preferences' && (
+        <div className="toolbar-content">
+          <div className="preference-controls">
+            <div className="preference-control">
+              <label>
+                <span>Gradient Preference</span>
+                <span className="preference-value">{gradientPreference.toFixed(1)}</span>
+              </label>
+              <input
+                type="range"
+                min="0.5"
+                max="2.0"
+                step="0.1"
+                value={gradientPreference}
+                onChange={(e) => handleGradientPreferenceChange(Number(e.target.value))}
+                className="preference-slider"
+              />
+              <div className="slider-labels">
+                <span>Steep OK</span>
+                <span>Normal</span>
+                <span>Gradual</span>
+              </div>
+              <div className="preference-hint">
+                {gradientPreference < 1.0 
+                  ? 'Accepts steeper routes for shorter distance'
+                  : gradientPreference > 1.0
+                  ? 'Prefers gentler slopes even if longer'
+                  : 'Balanced approach to slopes'}
+              </div>
+            </div>
+            
+            <div className="preference-control">
+              <label>
+                <span>Trail Preference</span>
+                <span className="preference-value">{trailPreference.toFixed(1)}</span>
+              </label>
+              <input
+                type="range"
+                min="0.5"
+                max="2.0"
+                step="0.1"
+                value={trailPreference}
+                onChange={(e) => handleTrailPreferenceChange(Number(e.target.value))}
+                className="preference-slider"
+              />
+              <div className="slider-labels">
+                <span>Urban</span>
+                <span>Mixed</span>
+                <span>Natural</span>
+              </div>
+              <div className="preference-hint">
+                {trailPreference < 1.0 
+                  ? 'Prefers streets and sidewalks'
+                  : trailPreference > 1.0
+                  ? 'Prefers natural trails and paths'
+                  : 'No preference between trail types'}
+              </div>
             </div>
           </div>
         </div>

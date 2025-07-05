@@ -61,6 +61,18 @@ class RouteOptions(BaseModel):
         le=90,
         description="Maximum allowed slope in degrees. Routes with steeper slopes will be penalized heavily."
     )
+    gradientPreference: float = Field(
+        1.0,
+        ge=0.1,
+        le=5.0,
+        description="Gradient preference: 1.0=normal, >1=prefer gradual slopes, <1=accept steep slopes"
+    )
+    trailPreference: float = Field(
+        1.0,
+        ge=0.1,
+        le=5.0,
+        description="Trail preference: 1.0=normal, >1=prefer natural trails, <1=prefer urban paths"
+    )
     
     @validator('customSlopeCosts')
     def validate_slope_order(cls, v):

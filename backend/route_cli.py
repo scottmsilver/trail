@@ -746,9 +746,14 @@ def query_point(lat, lon, use_api=False, api_url='http://localhost:9001'):
         # Apply gradient preference if specified
         obstacle_config = ObstaclePresets.experienced_hiker()
         obstacle_config.gradient_preference = args.gradient
+        
+        # Apply trail preference if specified
+        path_preferences = PathPreferencePresets.trail_seeker()
+        path_preferences.trail_preference = args.trails
+        
         cache = DEMTileCache(
             obstacle_config=obstacle_config,
-            path_preferences=PathPreferencePresets.trail_seeker()
+            path_preferences=path_preferences
         )
         
         with TimedStep("Querying point data"):
@@ -884,9 +889,14 @@ def prepopulate_area(lat1, lon1, lat2, lon2, use_api=False, api_url='http://loca
         # Apply gradient preference if specified
         obstacle_config = ObstaclePresets.experienced_hiker()
         obstacle_config.gradient_preference = args.gradient
+        
+        # Apply trail preference if specified
+        path_preferences = PathPreferencePresets.trail_seeker()
+        path_preferences.trail_preference = args.trails
+        
         cache = DEMTileCache(
             obstacle_config=obstacle_config,
-            path_preferences=PathPreferencePresets.trail_seeker()
+            path_preferences=path_preferences
         )
         
         # Step 1: Download terrain data
@@ -913,6 +923,170 @@ def prepopulate_area(lat1, lon1, lat2, lon2, use_api=False, api_url='http://loca
     return True
 
 
+def generate_route_map(path, output_filename, start_lat, start_lon, end_lat, end_lon):
+    """Generate a map with OSM tiles and the route overlay"""
+    import matplotlib.pyplot as plt
+    import matplotlib.patches as patches
+    from matplotlib.patches import FancyBboxPatch
+    import numpy as np
+    import requests
+    from PIL import Image
+    from io import BytesIO
+    import math
+    
+    # Extract coordinates from path
+    lats = []
+    lons = []
+    for point in path:
+        if isinstance(point, dict):
+            lats.append(point['lat'])
+            lons.append(point['lon'])
+        else:
+            lon, lat = point
+            lats.append(lat)
+            lons.append(lon)
+    
+    # Calculate bounds with padding
+    padding = 0.002  # ~200m padding
+    min_lat = min(lats) - padding
+    max_lat = max(lats) + padding
+    min_lon = min(lons) - padding
+    max_lon = max(lons) + padding
+    
+    # Determine appropriate zoom level based on area size
+    lat_diff = max_lat - min_lat
+    lon_diff = max_lon - min_lon
+    max_diff = max(lat_diff, lon_diff)
+    
+    if max_diff < 0.01:
+        zoom = 16
+    elif max_diff < 0.05:
+        zoom = 14
+    elif max_diff < 0.1:
+        zoom = 13
+    elif max_diff < 0.2:
+        zoom = 12
+    else:
+        zoom = 11
+    
+    # Function to convert lat/lon to tile numbers
+    def deg2num(lat_deg, lon_deg, zoom):
+        lat_rad = math.radians(lat_deg)
+        n = 2.0 ** zoom
+        x = int((lon_deg + 180.0) / 360.0 * n)
+        y = int((1.0 - math.asinh(math.tan(lat_rad)) / math.pi) / 2.0 * n)
+        return (x, y)
+    
+    # Function to convert tile numbers to lat/lon
+    def num2deg(xtile, ytile, zoom):
+        n = 2.0 ** zoom
+        lon_deg = xtile / n * 360.0 - 180.0
+        lat_rad = math.atan(math.sinh(math.pi * (1 - 2 * ytile / n)))
+        lat_deg = math.degrees(lat_rad)
+        return (lat_deg, lon_deg)
+    
+    # Get tile range
+    min_x, max_y = deg2num(min_lat, min_lon, zoom)
+    max_x, min_y = deg2num(max_lat, max_lon, zoom)
+    
+    # Ensure we have at least a 3x3 grid
+    if max_x - min_x < 2:
+        center_x = (min_x + max_x) // 2
+        min_x = center_x - 1
+        max_x = center_x + 1
+    if max_y - min_y < 2:
+        center_y = (min_y + max_y) // 2
+        min_y = center_y - 1
+        max_y = center_y + 1
+    
+    # Download and stitch tiles
+    width = (max_x - min_x + 1) * 256
+    height = (max_y - min_y + 1) * 256
+    
+    # Create base image
+    map_img = Image.new('RGB', (width, height))
+    
+    print(f"   Downloading {(max_x - min_x + 1) * (max_y - min_y + 1)} map tiles (zoom level {zoom})...")
+    
+    # Use OpenStreetMap tiles
+    tile_server = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+    headers = {
+        'User-Agent': 'TrailFinderCLI/1.0 (https://github.com/yourusername/trailfinder)'
+    }
+    
+    for x in range(min_x, max_x + 1):
+        for y in range(min_y, max_y + 1):
+            try:
+                url = tile_server.format(z=zoom, x=x, y=y)
+                response = requests.get(url, headers=headers, timeout=10)
+                response.raise_for_status()
+                tile = Image.open(BytesIO(response.content))
+                map_img.paste(tile, ((x - min_x) * 256, (y - min_y) * 256))
+            except Exception as e:
+                # Create a gray tile if download fails
+                gray_tile = Image.new('RGB', (256, 256), color=(200, 200, 200))
+                map_img.paste(gray_tile, ((x - min_x) * 256, (y - min_y) * 256))
+    
+    # Convert to numpy array for matplotlib
+    map_array = np.array(map_img)
+    
+    # Create figure
+    fig, ax = plt.subplots(figsize=(12, 12))
+    
+    # Display map
+    ax.imshow(map_array, extent=[min_x, max_x + 1, max_y + 1, min_y], aspect='auto')
+    
+    # Convert route coordinates to fractional tile coordinates
+    route_x = []
+    route_y = []
+    for lat, lon in zip(lats, lons):
+        # Get fractional tile coordinates
+        lat_rad = math.radians(lat)
+        n = 2.0 ** zoom
+        x = (lon + 180.0) / 360.0 * n
+        y = (1.0 - math.asinh(math.tan(lat_rad)) / math.pi) / 2.0 * n
+        route_x.append(x)
+        route_y.append(y)
+    
+    # Plot route
+    ax.plot(route_x, route_y, color='red', linewidth=3, alpha=0.8, label='Route')
+    
+    # Add start and end markers with fractional coordinates
+    lat_rad = math.radians(start_lat)
+    n = 2.0 ** zoom
+    start_x = (start_lon + 180.0) / 360.0 * n
+    start_y = (1.0 - math.asinh(math.tan(lat_rad)) / math.pi) / 2.0 * n
+    
+    lat_rad = math.radians(end_lat)
+    end_x = (end_lon + 180.0) / 360.0 * n
+    end_y = (1.0 - math.asinh(math.tan(lat_rad)) / math.pi) / 2.0 * n
+    
+    ax.scatter(start_x, start_y, color='green', s=200, marker='o', edgecolor='white', linewidth=2, zorder=5, label='Start')
+    ax.scatter(end_x, end_y, color='red', s=200, marker='s', edgecolor='white', linewidth=2, zorder=5, label='End')
+    
+    # Add title and labels
+    ax.set_title(f'Trail Route Map\n{len(path)} waypoints', fontsize=16, pad=20)
+    
+    # Remove axis labels but keep the frame
+    ax.set_xticks([])
+    ax.set_yticks([])
+    
+    # Add legend
+    ax.legend(loc='upper right', fontsize=12)
+    
+    # Add attribution
+    attribution = "© OpenStreetMap contributors"
+    ax.text(0.99, 0.01, attribution, transform=ax.transAxes, 
+            fontsize=8, ha='right', va='bottom', 
+            bbox=dict(boxstyle="round,pad=0.3", facecolor='white', alpha=0.8))
+    
+    # Save as JPEG
+    plt.tight_layout()
+    plt.savefig(output_filename, format='jpg', dpi=150, bbox_inches='tight', 
+                facecolor='white')
+    plt.close()
+
+
 def main():
     """Main CLI function"""
     
@@ -928,8 +1102,20 @@ Examples:
   # Find a route and export to GPX:
   python route_cli.py "Start: 40.6572, -111.5706" "End: 40.6486, -111.5639" --gpx trail.gpx
   
+  # Find a route and generate a map:
+  python route_cli.py "Start: 40.6572, -111.5706" "End: 40.6486, -111.5639" --map route_map.jpg
+  
+  # Find a route with both GPX and map output:
+  python route_cli.py "Start: 40.6572, -111.5706" "End: 40.6486, -111.5639" --gpx trail.gpx --map route_map.jpg
+  
   # Find a route preferring gradual slopes (gentler but possibly longer):
   python route_cli.py "Start: 40.6572, -111.5706" "End: 40.6486, -111.5639" --gradient 2.0
+  
+  # Find a route preferring natural trails over streets:
+  python route_cli.py "Start: 40.6572, -111.5706" "End: 40.6486, -111.5639" --trails 2.0
+  
+  # Combine preferences for gentle natural trails:
+  python route_cli.py "Start: 40.6572, -111.5706" "End: 40.6486, -111.5639" --gradient 2.0 --trails 2.0
   
   # Find a route using API service:
   python route_cli.py --api "Start: 40.6572, -111.5706" "End: 40.6486, -111.5639"
@@ -966,8 +1152,11 @@ Examples:
     parser.add_argument('--api-url', default='http://localhost:9001', help='API service URL (default: http://localhost:9001)')
     parser.add_argument('--debug-grid', action='store_true', help='Generate debug grid visualization (for small areas only)')
     parser.add_argument('--gpx', type=str, metavar='FILENAME', help='Export route to GPX file (e.g., route.gpx)')
+    parser.add_argument('--map', type=str, metavar='FILENAME', help='Export route map to JPG file (e.g., route_map.jpg)')
     parser.add_argument('--gradient', type=float, default=1.0, metavar='VALUE',
                        help='Gradient preference (1.0=normal, 2.0=prefer gradual slopes, 0.5=accept steep slopes)')
+    parser.add_argument('--trails', type=float, default=1.0, metavar='VALUE',
+                       help='Trail preference (1.0=normal, 2.0=prefer natural trails, 0.5=prefer urban paths)')
     
     args = parser.parse_args()
     
@@ -1073,10 +1262,12 @@ Examples:
                 # Use the same configuration as the API for consistency
                 # Apply gradient preference if specified
                 obstacle_config = ObstacleConfig(gradient_preference=args.gradient)
-                path_preferences = PathPreferences()
+                path_preferences = PathPreferences(trail_preference=args.trails)
                 
                 if args.gradient != 1.0:
                     print(f"   Gradient preference: {args.gradient} ({'gentler slopes' if args.gradient > 1 else 'steeper allowed'})")
+                if args.trails != 1.0:
+                    print(f"   Trail preference: {args.trails} ({'natural paths' if args.trails > 1 else 'urban paths'})")
                 
                 # Try dynamic weights optimization which showed 71.8x speedup in benchmark
                 optimization_config = {
@@ -1267,6 +1458,15 @@ Examples:
                 
             except Exception as e:
                 print(f"   ❌ Error exporting GPX: {str(e)}")
+        
+        # Export to map if requested
+        if args.map and path:
+            print(f"\n🗺️  Generating route map...")
+            try:
+                generate_route_map(path, args.map, start_lat, start_lon, end_lat, end_lon)
+                print(f"   ✓ Map saved to: {args.map}")
+            except Exception as e:
+                print(f"   ❌ Error generating map: {str(e)}")
         
     else:
         print(f"\n❌ No route found (total time: {format_time(route_time)})")

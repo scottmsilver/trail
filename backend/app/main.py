@@ -199,6 +199,15 @@ def get_configs_for_profile(profile: str, options=None):
                 path_preferences.path_costs['off_path'] = custom.off_path
             logger.info(f"Applied custom path costs")
     
+    # Apply gradient and trail preferences if provided
+    if options:
+        if hasattr(options, 'gradientPreference'):
+            obstacle_config.gradient_preference = options.gradientPreference
+            logger.info(f"Applied gradient preference: {options.gradientPreference}")
+        if hasattr(options, 'trailPreference'):
+            path_preferences.trail_preference = options.trailPreference
+            logger.info(f"Applied trail preference: {options.trailPreference}")
+    
     return obstacle_config, path_preferences
 
 
@@ -701,6 +710,198 @@ async def prepopulate_bounding_box(corners: dict):
     except Exception as e:
         logger.error(f"Error prepopulating area: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error prepopulating area: {str(e)}")
+
+
+@app.post("/api/terrain/cost-point")
+async def get_cost_at_point(request: dict):
+    """
+    Get the cost information for a single point.
+    Much faster than generating entire cost surface.
+    """
+    try:
+        lat = request.get('lat')
+        lon = request.get('lon')
+        
+        if lat is None or lon is None:
+            raise HTTPException(status_code=400, detail="lat and lon are required")
+        
+        # Create DEM cache with default settings
+        dem_cache = DEMTileCache(
+            obstacle_config=ObstaclePresets.experienced_hiker(),
+            path_preferences=PathPreferencePresets.trail_seeker()
+        )
+        
+        # Get cost data for a small area around the point
+        buffer = 0.0001  # Very small buffer ~11 meters
+        result = dem_cache.get_cost_at_point(lat, lon, buffer)
+        
+        if result is None:
+            raise HTTPException(status_code=500, detail="Failed to get cost data")
+        
+        # Check if it's an error response
+        if 'error' in result and not result.get('precomputed', True):
+            # Return 404 to indicate data not available
+            raise HTTPException(
+                status_code=404, 
+                detail=result['error'],
+                headers={"X-Tile": result.get('tile', 'unknown')}
+            )
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting cost at point: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/terrain/osm-data")
+async def get_osm_data_at_point(request: dict):
+    """
+    Get raw OSM data for a specific point.
+    Separate endpoint to avoid slowing down the main cost-point endpoint.
+    """
+    try:
+        import osmnx as ox
+        from shapely.geometry import box, Point
+        import pandas as pd
+        
+        lat = request.get('lat')
+        lon = request.get('lon')
+        
+        if lat is None or lon is None:
+            raise HTTPException(status_code=400, detail="lat and lon are required")
+        
+        # Create a small bounding box around the point
+        bbox_buffer = 0.0002  # About 22 meters - increased for better coverage
+        bbox = box(lon - bbox_buffer, lat - bbox_buffer, 
+                  lon + bbox_buffer, lat + bbox_buffer)
+        
+        # Get path preferences to know what tags to search for
+        path_preferences = PathPreferencePresets.trail_seeker()
+        
+        # Fetch OSM features at this location
+        ox.settings.log_console = False
+        logger.info(f"Fetching OSM data for ({lat}, {lon}) with buffer {bbox_buffer}")
+        features = ox.features_from_polygon(bbox, path_preferences.preferred_path_tags)
+        
+        raw_osm_data = []
+        logger.info(f"Found {len(features)} OSM features")
+        
+        if not features.empty:
+            # Get features that contain or are very close to our point
+            point = Point(lon, lat)
+            
+            for idx, feature in features.iterrows():
+                # More lenient distance check - within about 10 meters
+                if feature.geometry.contains(point) or feature.geometry.distance(point) < 0.0001:
+                    # Extract all tags
+                    tags = {}
+                    for col in features.columns:
+                        if col != 'geometry' and pd.notna(feature[col]) and not col.startswith('osm'):
+                            tags[col] = str(feature[col])
+                    
+                    # Determine our interpretation
+                    path_type = 'off_path'
+                    if 'highway' in tags:
+                        path_type = tags['highway']
+                    elif 'leisure' in tags:
+                        path_type = tags['leisure']
+                    elif 'landuse' in tags:
+                        path_type = tags['landuse']
+                    elif 'natural' in tags:
+                        natural_type = tags['natural']
+                        if natural_type in ['grassland', 'heath']:
+                            path_type = 'grass'
+                        elif natural_type == 'meadow':
+                            path_type = 'meadow'
+                        elif natural_type in ['beach', 'sand']:
+                            path_type = 'beach'
+                        else:
+                            path_type = natural_type
+                    elif 'piste:type' in tags:
+                        path_type = tags['piste:type']
+                    
+                    raw_osm_data.append({
+                        'osm_id': str(idx),
+                        'tags': tags,
+                        'interpreted_type': path_type,
+                        'cost_multiplier': path_preferences.get_path_cost_multiplier(path_type)
+                    })
+        
+        return {
+            'lat': lat,
+            'lon': lon,
+            'features_found': len(raw_osm_data),
+            'osm_data': raw_osm_data
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting OSM data: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/terrain/cost-surface")
+async def get_cost_surface(request: dict):
+    """
+    Get the cost surface data for visualization.
+    Can be called with either:
+    - start/end coordinates (for route-based view)
+    - bounds only (for general exploration)
+    """
+    try:
+        # Check if this is a bounds-only request
+        if 'bounds' in request and not request.get('start'):
+            bounds = request['bounds']
+            min_lat = bounds['south']
+            max_lat = bounds['north']
+            min_lon = bounds['west']
+            max_lon = bounds['east']
+            
+            # Use center point as placeholder for start/end
+            center_lat = (min_lat + max_lat) / 2
+            center_lon = (min_lon + max_lon) / 2
+            start_lat = center_lat
+            start_lon = center_lon
+            end_lat = center_lat
+            end_lon = center_lon
+        else:
+            # Traditional route-based request
+            start = request['start']
+            end = request['end']
+            start_lat = start['lat']
+            start_lon = start['lon']
+            end_lat = end['lat']
+            end_lon = end['lon']
+            
+            # Define area of interest around route
+            min_lat = min(start_lat, end_lat) - 0.001
+            max_lat = max(start_lat, end_lat) + 0.001
+            min_lon = min(start_lon, end_lon) - 0.001
+            max_lon = max(start_lon, end_lon) + 0.001
+        
+        # Create DEM cache with default settings
+        dem_cache = DEMTileCache(
+            obstacle_config=ObstaclePresets.experienced_hiker(),
+            path_preferences=PathPreferencePresets.trail_seeker()
+        )
+        
+        # Get the cost surface data
+        cost_data = dem_cache.get_cost_surface_for_bounds(
+            min_lat, max_lat, min_lon, max_lon,
+            start_lat, start_lon,
+            end_lat, end_lon
+        )
+        
+        if cost_data is None:
+            raise HTTPException(status_code=500, detail="Failed to generate cost surface")
+        
+        return cost_data
+        
+    except Exception as e:
+        logger.error(f"Error generating cost surface: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/routes/debug", response_model=RouteResult)
