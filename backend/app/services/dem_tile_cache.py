@@ -501,6 +501,13 @@ class DEMTileCache:
             dem = dem_resampled
             out_trans = transform
             crs = rasterio.crs.CRS.from_string(dst_crs)
+        
+        # Apply smoothing once after reprojection if configured
+        if self.dem_smoothing_sigma > 0:
+            from scipy.ndimage import gaussian_filter
+            dem = gaussian_filter(dem, sigma=self.dem_smoothing_sigma)
+            print(f"[DEM SMOOTHING] Applied Gaussian filter with sigma={self.dem_smoothing_sigma} pixels during reprojection")
+            
         return dem, out_trans, crs
 
     def fetch_obstacles(self, min_lat, max_lat, min_lon, max_lon):
@@ -669,22 +676,11 @@ class DEMTileCache:
         - cost_surface: Numpy array representing the cost of traversing each cell.
         - slope_degrees: Numpy array of slope values in degrees.
         """
-        from scipy.ndimage import gaussian_filter
-        
-        # Apply smoothing to remove DEM artifacts
-        # Sigma of 1.0 pixels smooths features smaller than ~3.7m
-        dem_smoothing_sigma = getattr(self, 'dem_smoothing_sigma', 1.0)
-        
-        if dem_smoothing_sigma > 0:
-            dem_smoothed = gaussian_filter(dem, sigma=dem_smoothing_sigma)
-            print(f"[DEM SMOOTHING] Applied Gaussian filter with sigma={dem_smoothing_sigma} pixels")
-        else:
-            dem_smoothed = dem
-        
-        # Calculate slopes from smoothed DEM
+        # DEM is already smoothed during reprojection
+        # Calculate slopes directly from the DEM
         cell_size_x = out_trans.a
         cell_size_y = -out_trans.e  # Negative because of the coordinate system
-        dzdx, dzdy = np.gradient(dem_smoothed, cell_size_x, cell_size_y)
+        dzdx, dzdy = np.gradient(dem, cell_size_x, cell_size_y)
         slope_radians = np.arctan(np.sqrt(dzdx**2 + dzdy**2))
         slope_degrees = np.degrees(slope_radians)
 
