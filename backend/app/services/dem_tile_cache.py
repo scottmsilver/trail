@@ -26,7 +26,7 @@ from app.services.tiled_dem_cache import TiledDEMCache
 import time
 
 class DEMTileCache:
-    def __init__(self, buffer=0.05, debug_mode=False, obstacle_config=None, path_preferences=None):
+    def __init__(self, buffer=0.05, debug_mode=False, obstacle_config=None, path_preferences=None, dem_smoothing_sigma=1.0):
         """
         Initializes the DEMTileCache.
 
@@ -36,6 +36,7 @@ class DEMTileCache:
         - obstacle_config: ObstacleConfig instance for customizing obstacle handling
         - path_preferences: PathPreferences instance for preferring certain paths
         """
+        self.dem_smoothing_sigma = dem_smoothing_sigma
         self.buffer = buffer
         self.debug_mode = debug_mode
         self.debug_data = None
@@ -221,8 +222,10 @@ class DEMTileCache:
         if path is None:
             return None
         
-        # Calculate slopes for the path
-        path_with_slopes = self.calculate_path_slopes(path, dem, out_trans, transformer)
+        # Calculate slopes and path types for the path
+        path_raster = composed_data.get('path_raster')
+        path_types = composed_data.get('path_types')
+        path_with_slopes = self.calculate_path_slopes(path, dem, out_trans, transformer, path_raster, path_types)
         
         return path_with_slopes
     
@@ -236,8 +239,10 @@ class DEMTileCache:
         # Try to use tiled cost surface first
         tiled_result = self._try_tiled_cost_surface(min_lat, max_lat, min_lon, max_lon, 
                                                     dem, out_trans, crs)
+        path_raster = None
+        path_types = None
         if tiled_result is not None:
-            cost_surface, slope_degrees, indices, dem_composed = tiled_result
+            cost_surface, slope_degrees, indices, dem_composed, path_raster, path_types = tiled_result
             # Use composed DEM if available
             if dem_composed is not None:
                 dem = dem_composed
@@ -260,7 +265,7 @@ class DEMTileCache:
 
                 # Fetch preferred paths
                 paths = self.fetch_paths(min_lat, max_lat, min_lon, max_lon)
-                path_raster, path_types = self.rasterize_paths(paths, out_trans, dem.shape, crs)
+                path_raster, path_types, path_raw_tags = self.rasterize_paths(paths, out_trans, dem.shape, crs)
 
                 # Compute Slope and Cost Surface with Obstacles and Path Preferences
                 cost_surface, slope_degrees = self.compute_cost_surface(dem, out_trans, obstacle_mask, path_raster, path_types)
@@ -334,7 +339,7 @@ class DEMTileCache:
             return None
 
         # Calculate slopes for each segment of the path
-        path_with_slopes = self.calculate_path_slopes(path, dem, out_trans, transformer)
+        path_with_slopes = self.calculate_path_slopes(path, dem, out_trans, transformer, path_raster, path_types)
 
         # Skip plotting in backend service
         # self.plot_results(dem, out_trans, crs, path, lat1, lon1, lat2, lon2,
@@ -575,32 +580,45 @@ class DEMTileCache:
         Returns:
         - path_raster: Numpy array where path cells contain type IDs
         - path_types: Dict mapping IDs to path types
+        - path_raw_tags: Dict mapping IDs to original OSM tags
         """
         if paths.empty:
-            return np.zeros(dem_shape, dtype=int), {}
+            return np.zeros(dem_shape, dtype=int), {}, {}
         
         # Reproject paths to DEM CRS
         paths = paths.to_crs(crs.to_string())
         
-        # Create mapping of path types to IDs
+        # Create mapping of path types to IDs and store raw tags
         path_types = {}
+        path_raw_tags = {}  # New: store original OSM tags for each path
         path_id = 1
         
         # Prepare shapes for rasterization with path type IDs
         shapes = []
         for idx, row in paths.iterrows():
             if row.geometry is not None:
+                # Collect all non-null OSM tags for this feature
+                raw_tags = {}
+                for col in paths.columns:
+                    if col != 'geometry' and pd.notna(row[col]) and not str(col).startswith('osm'):
+                        raw_tags[col] = str(row[col])
+                
                 # Determine path type from tags
                 path_type = 'off_path'
+                source_tag = None
                 if 'highway' in row and pd.notna(row['highway']):
                     path_type = str(row['highway'])
+                    source_tag = 'highway'
                 elif 'leisure' in row and pd.notna(row['leisure']):
                     path_type = str(row['leisure'])
+                    source_tag = 'leisure'
                 elif 'landuse' in row and pd.notna(row['landuse']):
                     path_type = str(row['landuse'])
+                    source_tag = 'landuse'
                 elif 'natural' in row and pd.notna(row['natural']):
                     # Map natural types to our cost categories
                     natural_type = str(row['natural'])
+                    source_tag = 'natural'
                     if natural_type in ['grassland', 'heath']:
                         path_type = 'grass'
                     elif natural_type == 'meadow':
@@ -609,13 +627,24 @@ class DEMTileCache:
                         path_type = 'beach'
                     else:
                         path_type = natural_type
+                elif 'piste:type' in row and pd.notna(row['piste:type']):
+                    path_type = str(row['piste:type'])
+                    source_tag = 'piste:type'
                 
-                # Get or assign ID for this path type
-                if path_type not in path_types:
-                    path_types[path_type] = path_id
-                    path_id += 1
+                # Get or assign ID for this specific feature
+                current_path_id = path_id
+                path_id += 1
                 
-                shapes.append((row.geometry, path_types[path_type]))
+                # Store the interpreted type and raw tags
+                path_types[current_path_id] = path_type
+                path_raw_tags[current_path_id] = {
+                    'osm_id': str(idx),
+                    'interpreted_type': path_type,
+                    'source_tag': source_tag,
+                    'tags': raw_tags
+                }
+                
+                shapes.append((row.geometry, current_path_id))
         
         # Rasterize paths
         path_raster = rasterize(
@@ -627,22 +656,35 @@ class DEMTileCache:
             dtype=np.uint8
         )
         
-        # Reverse the path_types dict for easier lookup
-        id_to_type = {v: k for k, v in path_types.items()}
-        
-        return path_raster, id_to_type
+        # Note: path_types now maps ID to type directly (no need to reverse)
+        return path_raster, path_types, path_raw_tags
+
 
     def compute_cost_surface(self, dem, out_trans, obstacle_mask, path_raster=None, path_types=None):
         """
         Computes the slope and creates the cost surface, incorporating obstacles and path preferences.
+        Now includes DEM smoothing to remove artifacts.
 
         Returns:
         - cost_surface: Numpy array representing the cost of traversing each cell.
         - slope_degrees: Numpy array of slope values in degrees.
         """
+        from scipy.ndimage import gaussian_filter
+        
+        # Apply smoothing to remove DEM artifacts
+        # Sigma of 1.0 pixels smooths features smaller than ~3.7m
+        dem_smoothing_sigma = getattr(self, 'dem_smoothing_sigma', 1.0)
+        
+        if dem_smoothing_sigma > 0:
+            dem_smoothed = gaussian_filter(dem, sigma=dem_smoothing_sigma)
+            print(f"[DEM SMOOTHING] Applied Gaussian filter with sigma={dem_smoothing_sigma} pixels")
+        else:
+            dem_smoothed = dem
+        
+        # Calculate slopes from smoothed DEM
         cell_size_x = out_trans.a
         cell_size_y = -out_trans.e  # Negative because of the coordinate system
-        dzdx, dzdy = np.gradient(dem, cell_size_x, cell_size_y)
+        dzdx, dzdy = np.gradient(dem_smoothed, cell_size_x, cell_size_y)
         slope_radians = np.arctan(np.sqrt(dzdx**2 + dzdy**2))
         slope_degrees = np.degrees(slope_radians)
 
@@ -661,7 +703,17 @@ class DEMTileCache:
                     if path_id > 0 and path_id in path_types:
                         path_type = path_types[path_id]
                         path_multiplier = self.path_preferences.get_path_cost_multiplier(path_type)
-                        cost_surface[i, j] = base_cost * path_multiplier
+                        
+                        # Reduce path bonus on steep slopes (>25°)
+                        # This prevents the algorithm from taking very steep trails
+                        if slope > 25:
+                            # Gradually reduce the path bonus as slope increases
+                            # At 25°: full bonus, at 35°: half bonus, at 45°: no bonus
+                            slope_factor = max(0.5, 1.0 - (slope - 25) / 20.0)
+                            effective_multiplier = 1.0 - (1.0 - path_multiplier) * slope_factor
+                            cost_surface[i, j] = base_cost * effective_multiplier
+                        else:
+                            cost_surface[i, j] = base_cost * path_multiplier
                     else:
                         # Off-path terrain
                         off_path_multiplier = self.path_preferences.get_path_cost_multiplier(None)
@@ -735,7 +787,7 @@ class DEMTileCache:
             obstacles = self.fetch_obstacles(min_lat, max_lat, min_lon, max_lon)
             obstacle_mask = self.get_obstacle_mask(obstacles, out_trans, dem.shape, crs)
             paths = self.fetch_paths(min_lat, max_lat, min_lon, max_lon)
-            path_raster, path_types = self.rasterize_paths(paths, out_trans, dem.shape, crs)
+            path_raster, path_types, path_raw_tags = self.rasterize_paths(paths, out_trans, dem.shape, crs)
             
             # Compute cost surface
             cost_surface, slope_degrees = self.compute_cost_surface(dem, out_trans, obstacle_mask, path_raster, path_types)
@@ -745,7 +797,10 @@ class DEMTileCache:
                 'slope_degrees': slope_degrees,
                 'transform': out_trans,
                 'crs': crs,
-                'dem': dem
+                'dem': dem,
+                'path_raster': path_raster,
+                'path_types': path_types,
+                'path_raw_tags': path_raw_tags
             }
         except Exception as e:
             print(f"Error computing tile cost surface: {e}")
@@ -776,6 +831,8 @@ class DEMTileCache:
                 cost_surface = composed_data['cost_surface']
                 slope_degrees = composed_data['slope_degrees']
                 dem_composed = composed_data.get('dem')  # Get composed DEM data
+                path_raster = composed_data.get('path_raster')
+                path_types = composed_data.get('path_types')
                 indices = self.build_indices(cost_surface)
                 
                 # Update the transform if we have a composite
@@ -787,7 +844,7 @@ class DEMTileCache:
                 self._composed_crs = composed_data.get('crs', crs)
                 
                 print(f"[TILE SUCCESS] Returning tiled cost surface with shape {cost_surface.shape}")
-                return cost_surface, slope_degrees, indices, dem_composed
+                return cost_surface, slope_degrees, indices, dem_composed, path_raster, path_types
             else:
                 print(f"[TILE] compose_tiles returned None")
                 
@@ -1870,8 +1927,8 @@ class DEMTileCache:
         if len(in_path_indices[0]) > 0:
             print(f"Debug: First few in_path cells: {list(zip(in_path_indices[0][:5], in_path_indices[1][:5]))}")
     
-    def calculate_path_slopes(self, path, dem, out_trans, transformer):
-        """Calculate slope for each segment of the path"""
+    def calculate_path_slopes(self, path, dem, out_trans, transformer, path_raster=None, path_types=None):
+        """Calculate slope and path type for each segment of the path"""
         if not path or len(path) < 2:
             return path
             
@@ -1886,11 +1943,19 @@ class DEMTileCache:
             row = int(round((y - out_trans.f) / out_trans.e))
             
             elevation = None
+            path_type = 'off_path'  # Default
+            
             if 0 <= row < dem.shape[0] and 0 <= col < dem.shape[1]:
                 elevation = float(dem[row, col])
                 # Check for NaN or invalid values
                 if np.isnan(elevation):
                     elevation = None
+                
+                # Get path type at this location
+                if path_raster is not None and path_types is not None:
+                    path_id = path_raster[row, col]
+                    if path_id > 0 and path_id in path_types:
+                        path_type = path_types[path_id]
             
             # Calculate slope to next point
             slope_degrees = 0.0
@@ -1926,11 +1991,244 @@ class DEMTileCache:
                 'lat': lat,
                 'lon': lon,
                 'elevation': elevation,
-                'slope': round(slope_degrees, 1)
+                'slope': round(slope_degrees, 1),
+                'path_type': path_type
             })
         
         return path_with_slopes
 
+    def get_cost_at_point(self, lat, lon, buffer=0.0001):
+        """
+        Get cost information for a single point FROM PRECOMPUTED DATA ONLY.
+        Returns None if data is not precomputed.
+        
+        Args:
+            lat: Latitude of the point
+            lon: Longitude of the point
+            buffer: Buffer around point in degrees (default ~11 meters)
+            
+        Returns:
+            Dictionary with cost information at the point, or None if not precomputed
+        """
+        try:
+            # Define tiny bounds around the point
+            min_lat = lat - buffer
+            max_lat = lat + buffer
+            min_lon = lon - buffer
+            max_lon = lon + buffer
+            
+            # Get the tile containing this point
+            tiles = self.tiled_cache.get_tiles_for_bounds(min_lat, max_lat, min_lon, max_lon)
+            if not tiles:
+                return {'error': 'No tile found for this location', 'precomputed': False}
+                
+            # Get cost surface for the tile - DO NOT COMPUTE IF NOT CACHED
+            tile_x, tile_y = tiles[0]  # Should only be one tile for such a small area
+            tile_data = self.tiled_cache.get_tile(tile_x, tile_y, 'cost')
+            
+            if tile_data is None:
+                # Data not precomputed - return error instead of computing
+                return {
+                    'error': 'Data not precomputed for this area', 
+                    'precomputed': False,
+                    'tile': f'({tile_x}, {tile_y})'
+                }
+            
+            # If we get here, we have precomputed data
+                
+            # Get the exact pixel for this point
+            cost_surface = tile_data['cost_surface']
+            slope_degrees = tile_data['slope_degrees']
+            dem = tile_data.get('dem')
+            path_raster = tile_data.get('path_raster')
+            path_types = tile_data.get('path_types', {})
+            path_raw_tags = tile_data.get('path_raw_tags', {})
+            transform = tile_data['transform']
+            crs = tile_data['crs']
+            
+            # Convert lat/lon to pixel coordinates
+            transformer = Transformer.from_crs("EPSG:4326", crs, always_xy=True)
+            x, y = transformer.transform(lon, lat)
+            
+            # Get pixel indices
+            col = int((x - transform.c) / transform.a)
+            row = int((y - transform.f) / transform.e)
+            
+            # Check bounds
+            height, width = cost_surface.shape
+            if not (0 <= row < height and 0 <= col < width):
+                return None
+                
+            # Get values at this point
+            cost = float(cost_surface[row, col])
+            slope = float(slope_degrees[row, col])
+            elevation = float(dem[row, col]) if dem is not None else None
+            
+            # Get path type
+            path_id = int(path_raster[row, col]) if path_raster is not None else 0
+            path_type = path_types.get(path_id, 'off_path' if path_id == 0 else 'unknown')
+            
+            # Get raw OSM tags for this path ID if available
+            raw_tags_info = None
+            if path_id > 0 and path_raw_tags:
+                raw_tags_info = path_raw_tags.get(path_id, None)
+            
+            # Calculate cost factors
+            base_cost = 1.0
+            slope_cost = self.obstacle_config.get_slope_cost_multiplier(slope)
+            path_multiplier = self.path_preferences.get_path_cost_multiplier(path_type)
+            is_obstacle = cost >= 1000
+            
+            # Get all path types from the tile to show what we know about
+            all_path_types_in_tile = {}
+            if path_types:
+                all_path_types_in_tile = {str(k): v for k, v in path_types.items()}
+            
+            return {
+                'lat': lat,
+                'lon': lon,
+                'cost': cost,
+                'slope': slope,
+                'elevation': elevation,
+                'path_type': path_type,
+                'path_id': path_id,
+                'raw_osm_data': raw_tags_info,  # This is what was used to determine the path type
+                'tile_info': {
+                    'tile_coords': f'({tile_x}, {tile_y})',
+                    'all_path_types': all_path_types_in_tile,
+                    'total_path_types': len(all_path_types_in_tile)
+                },
+                'factors': {
+                    'base_cost': base_cost,
+                    'slope_cost': slope_cost,
+                    'path_multiplier': path_multiplier,
+                    'is_obstacle': is_obstacle
+                }
+            }
+            
+        except Exception as e:
+            print(f"Error getting cost at point: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+    
+    def get_cost_surface_for_bounds(self, min_lat, max_lat, min_lon, max_lon, 
+                                    start_lat, start_lon, end_lat, end_lon):
+        """
+        Get cost surface data for visualization purposes.
+        Returns a dictionary with cost surface array and metadata for rendering.
+        """
+        try:
+            # Try to use tiled cost surface first
+            tiled_result = self._try_tiled_cost_surface(min_lat, max_lat, min_lon, max_lon, 
+                                                        None, None, 'EPSG:4326')
+            
+            if tiled_result is not None:
+                cost_surface, slope_degrees, indices, dem_composed, path_raster, path_types = tiled_result
+                out_trans = self._composed_transform if hasattr(self, '_composed_transform') else None
+                crs = self._composed_crs if hasattr(self, '_composed_crs') else 'EPSG:4326'
+                dem = dem_composed if dem_composed is not None else None
+            else:
+                # Fall back to computing it
+                # Download DEM
+                dem_file = self.download_dem(min_lat, max_lat, min_lon, max_lon)
+                if not dem_file:
+                    return None
+                    
+                # Read and reproject DEM
+                dem, out_trans, crs = self.read_dem(dem_file)
+                if dem is None:
+                    return None
+                dem, out_trans, crs = self.reproject_dem(dem, out_trans, crs)
+                
+                # Fetch obstacles and paths
+                obstacles = self.fetch_obstacles(min_lat, max_lat, min_lon, max_lon)
+                obstacle_mask = self.get_obstacle_mask(obstacles, out_trans, dem.shape, crs)
+                
+                paths = self.fetch_paths(min_lat, max_lat, min_lon, max_lon)
+                path_raster, path_types, path_raw_tags = self.rasterize_paths(paths, out_trans, dem.shape, crs)
+                
+                # Compute cost surface
+                cost_surface, slope_degrees = self.compute_cost_surface(dem, out_trans, obstacle_mask, path_raster, path_types)
+            
+            # Convert transform to list for JSON serialization
+            transform_list = [
+                out_trans.a, out_trans.b, out_trans.c,
+                out_trans.d, out_trans.e, out_trans.f
+            ]
+            
+            # Downsample if too large
+            height, width = cost_surface.shape
+            max_size = 500  # Maximum dimension for web visualization
+            
+            if height > max_size or width > max_size:
+                # Calculate downsampling factor
+                factor = max(height // max_size, width // max_size)
+                
+                # Downsample arrays
+                cost_surface_downsampled = cost_surface[::factor, ::factor]
+                slope_degrees_downsampled = slope_degrees[::factor, ::factor]
+                dem_downsampled = dem[::factor, ::factor] if dem is not None else None
+                path_raster_downsampled = path_raster[::factor, ::factor] if path_raster is not None else None
+                
+                # Adjust transform for downsampling
+                new_transform = [
+                    out_trans.a * factor,  # pixel width
+                    out_trans.b,            # rotation
+                    out_trans.c,            # x origin
+                    out_trans.d,            # rotation
+                    out_trans.e * factor,   # pixel height (negative)
+                    out_trans.f             # y origin
+                ]
+            else:
+                cost_surface_downsampled = cost_surface
+                slope_degrees_downsampled = slope_degrees
+                dem_downsampled = dem
+                path_raster_downsampled = path_raster
+                new_transform = transform_list
+                factor = 1
+            
+            # Create bounds for the data
+            bounds = {
+                'north': max_lat,
+                'south': min_lat,
+                'east': max_lon,
+                'west': min_lon
+            }
+            
+            # Prepare path types mapping for client
+            path_types_list = {}
+            if path_types:
+                for k, v in path_types.items():
+                    path_types_list[str(k)] = v
+            
+            # Replace NaN and inf values with reasonable defaults
+            cost_surface_clean = np.nan_to_num(cost_surface_downsampled, nan=1000.0, posinf=10000.0, neginf=0.0)
+            slope_degrees_clean = np.nan_to_num(slope_degrees_downsampled, nan=0.0, posinf=90.0, neginf=0.0)
+            
+            return {
+                'cost_surface': cost_surface_clean.tolist(),
+                'slope_degrees': slope_degrees_clean.tolist(),
+                'elevation': np.nan_to_num(dem_downsampled, nan=0.0).tolist() if dem_downsampled is not None else None,
+                'path_raster': path_raster_downsampled.tolist() if path_raster_downsampled is not None else None,
+                'path_types': path_types_list,
+                'transform': new_transform,
+                'bounds': bounds,
+                'shape': {
+                    'height': cost_surface_downsampled.shape[0],
+                    'width': cost_surface_downsampled.shape[1]
+                },
+                'downsampling_factor': factor,
+                'start': {'lat': start_lat, 'lon': start_lon},
+                'end': {'lat': end_lat, 'lon': end_lon}
+            }
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            print(f"Error getting cost surface for bounds: {e}")
+            return None
+    
     def get_debug_data(self):
         """Return the collected debug data"""
         if not self.debug_mode or not self.debug_data:
@@ -2215,7 +2513,7 @@ class DEMTileCache:
             # Fetch preferred paths
             print("Fetching preferred paths...")
             paths = self.fetch_paths(min_lat, max_lat, min_lon, max_lon)
-            path_raster, path_types = self.rasterize_paths(paths, out_trans, dem.shape, crs)
+            path_raster, path_types, path_raw_tags = self.rasterize_paths(paths, out_trans, dem.shape, crs)
             
             # Compute cost surface
             print("Computing cost surface...")
