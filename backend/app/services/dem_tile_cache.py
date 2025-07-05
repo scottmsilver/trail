@@ -1094,9 +1094,12 @@ class DEMTileCache:
                         # Apply dynamic weight
                         if use_dynamic_weights:
                             progress = 1.0 - (heuristic_cost / start_h) if start_h > 0 else 0
-                            heuristic_weight = 2.0 - progress
+                            # Reduce heuristic weight based on gradient preference
+                            # gradient_preference > 1 means we're more willing to explore longer paths
+                            base_weight = 2.0 / self.obstacle_config.gradient_preference
+                            heuristic_weight = base_weight - (progress * base_weight / 2.0)
                         else:
-                            heuristic_weight = 1.0
+                            heuristic_weight = 1.0 / self.obstacle_config.gradient_preference
                         
                         f_score = tentative_g_score + heuristic_cost * heuristic_weight
                         tie_breaker += 1
@@ -1512,8 +1515,9 @@ class DEMTileCache:
             if use_dynamic_weights:
                 # Progress = how close we are to goal (0 to 1)
                 progress = 1.0 - (current_h / start_h) if start_h > 0 else 0
-                # Start aggressive (weight=2.0), end conservative (weight=1.0)
-                heuristic_weight = 2.0 - progress
+                # Reduce heuristic weight based on gradient preference
+                base_weight = 2.0 / self.obstacle_config.gradient_preference
+                heuristic_weight = base_weight - (progress * base_weight / 2.0)
                 
                 if self.debug_mode and step_count % 1000 == 0:
                     self.debug_data['optimization_stats']['dynamic_weight_changes'].append({
@@ -1522,7 +1526,7 @@ class DEMTileCache:
                         'progress': progress
                     })
             else:
-                heuristic_weight = 1.0
+                heuristic_weight = 1.0 / self.obstacle_config.gradient_preference
             
             # Explore neighbors
             neighbor_evaluations = [] if self.debug_mode else None
@@ -2080,6 +2084,27 @@ class DEMTileCache:
             if path_types:
                 all_path_types_in_tile = {str(k): v for k, v in path_types.items()}
             
+            # Calculate the exponential components
+            import numpy as np
+            growth_rate = 0.085
+            exponential_value = np.exp(growth_rate * slope)
+            
+            # Show how final cost is calculated
+            final_cost_calculation = {
+                'formula': 'final_cost = base_cost × e^(growth_rate × slope) × path_multiplier',
+                'base_cost': base_cost,
+                'slope_degrees': slope,
+                'growth_rate': growth_rate,
+                'exponential': exponential_value,
+                'slope_cost_raw': slope_cost,
+                'path_multiplier': path_multiplier,
+                'calculation_steps': {
+                    'step1': f'e^({growth_rate} × {slope:.1f}°) = {exponential_value:.3f}',
+                    'step2': f'slope_cost = {base_cost} × {exponential_value:.3f} = {slope_cost:.3f}',
+                    'step3': f'final_cost = {slope_cost:.3f} × {path_multiplier} = {cost:.3f}'
+                }
+            }
+            
             return {
                 'lat': lat,
                 'lon': lon,
@@ -2099,7 +2124,8 @@ class DEMTileCache:
                     'slope_cost': slope_cost,
                     'path_multiplier': path_multiplier,
                     'is_obstacle': is_obstacle
-                }
+                },
+                'cost_breakdown': final_cost_calculation
             }
             
         except Exception as e:

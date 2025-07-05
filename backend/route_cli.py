@@ -27,6 +27,7 @@ import re
 import argparse
 import requests
 import json
+from app.services.gpx_generator import GPXGenerator
 
 
 def get_verbose_dem_cache_class():
@@ -742,8 +743,11 @@ def query_point(lat, lon, use_api=False, api_url='http://localhost:9001'):
         from app.services.path_preferences import PathPreferencePresets
         
         # Create cache with same settings as web service
+        # Apply gradient preference if specified
+        obstacle_config = ObstaclePresets.experienced_hiker()
+        obstacle_config.gradient_preference = args.gradient
         cache = DEMTileCache(
-            obstacle_config=ObstaclePresets.experienced_hiker(),
+            obstacle_config=obstacle_config,
             path_preferences=PathPreferencePresets.trail_seeker()
         )
         
@@ -877,8 +881,11 @@ def prepopulate_area(lat1, lon1, lat2, lon2, use_api=False, api_url='http://loca
         from app.services.path_preferences import PathPreferencePresets
         
         # Create cache with same settings as web service
+        # Apply gradient preference if specified
+        obstacle_config = ObstaclePresets.experienced_hiker()
+        obstacle_config.gradient_preference = args.gradient
         cache = DEMTileCache(
-            obstacle_config=ObstaclePresets.experienced_hiker(),
+            obstacle_config=obstacle_config,
             path_preferences=PathPreferencePresets.trail_seeker()
         )
         
@@ -918,6 +925,12 @@ Examples:
   # Find a route using local libraries (default):
   python route_cli.py "Start: 40.6572, -111.5706" "End: 40.6486, -111.5639"
   
+  # Find a route and export to GPX:
+  python route_cli.py "Start: 40.6572, -111.5706" "End: 40.6486, -111.5639" --gpx trail.gpx
+  
+  # Find a route preferring gradual slopes (gentler but possibly longer):
+  python route_cli.py "Start: 40.6572, -111.5706" "End: 40.6486, -111.5639" --gradient 2.0
+  
   # Find a route using API service:
   python route_cli.py --api "Start: 40.6572, -111.5706" "End: 40.6486, -111.5639"
   
@@ -952,6 +965,9 @@ Examples:
     parser.add_argument('--api', action='store_true', help='Use API service instead of local libraries')
     parser.add_argument('--api-url', default='http://localhost:9001', help='API service URL (default: http://localhost:9001)')
     parser.add_argument('--debug-grid', action='store_true', help='Generate debug grid visualization (for small areas only)')
+    parser.add_argument('--gpx', type=str, metavar='FILENAME', help='Export route to GPX file (e.g., route.gpx)')
+    parser.add_argument('--gradient', type=float, default=1.0, metavar='VALUE',
+                       help='Gradient preference (1.0=normal, 2.0=prefer gradual slopes, 0.5=accept steep slopes)')
     
     args = parser.parse_args()
     
@@ -1055,8 +1071,12 @@ Examples:
                 VerboseDEMTileCache = get_verbose_dem_cache_class()
                 
                 # Use the same configuration as the API for consistency
-                obstacle_config = ObstacleConfig()
+                # Apply gradient preference if specified
+                obstacle_config = ObstacleConfig(gradient_preference=args.gradient)
                 path_preferences = PathPreferences()
+                
+                if args.gradient != 1.0:
+                    print(f"   Gradient preference: {args.gradient} ({'gentler slopes' if args.gradient > 1 else 'steeper allowed'})")
                 
                 # Try dynamic weights optimization which showed 71.8x speedup in benchmark
                 optimization_config = {
@@ -1213,6 +1233,40 @@ Examples:
                 if isinstance(data, dict) and 'cost_surface' in data:
                     total_memory_mb += data['cost_surface'].nbytes / (1024 * 1024)
             print(f"  Memory used:      ~{total_memory_mb:.1f} MB")
+        
+        # Export to GPX if requested
+        if args.gpx and path:
+            print(f"\n📁 Exporting to GPX file...")
+            try:
+                # Calculate route statistics for GPX metadata
+                stats = {
+                    'distance_km': path_km,
+                    'elevation_gain_m': int(elevation_gain) if elevation_gain > 0 else 0,
+                    'max_slope': max_slope,
+                    'difficulty': 'Moderate'  # Could be calculated based on slope/distance
+                }
+                
+                # Generate route name from coordinates
+                route_name = f"Trail Route: ({start_lat:.4f}, {start_lon:.4f}) to ({end_lat:.4f}, {end_lon:.4f})"
+                route_desc = f"Generated trail route - {path_km:.2f}km with {elevation_gain:.0f}m elevation gain"
+                
+                # Create GPX content
+                gpx_content = GPXGenerator.create_gpx(
+                    path_with_slopes=path,
+                    route_name=route_name,
+                    route_description=route_desc,
+                    stats=stats
+                )
+                
+                # Write to file
+                with open(args.gpx, 'w', encoding='utf-8') as f:
+                    f.write(gpx_content)
+                
+                print(f"   ✓ GPX file saved to: {args.gpx}")
+                print(f"   Route contains {len(path)} track points with elevation data")
+                
+            except Exception as e:
+                print(f"   ❌ Error exporting GPX: {str(e)}")
         
     else:
         print(f"\n❌ No route found (total time: {format_time(route_time)})")
