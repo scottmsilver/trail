@@ -69,15 +69,35 @@ elevation = lib.get_elevation(lat, lon)
 
 ## Visualization
 
+### Quick Visualization
 Use `visualize_elevation.py` to create depth maps:
 
-```python
+```bash
 python visualize_elevation.py
 ```
 
 This creates:
 - `depth_map_10m.png` - Colored terrain map with contours
 - `depth_map_10m_grayscale.png` - Grayscale depth map
+
+### Command-Line Download Tool
+Use `download_depth_map.py` to download elevation data and create depth maps for any area:
+
+```bash
+# Using bounds (south,north,west,east)
+python download_depth_map.py --bounds 40.6448,40.6588,-111.5780,-111.5595 --resolution 3
+
+# Using individual coordinates
+python download_depth_map.py --lat1 40.6588 --lon1 -111.5780 --lat2 40.6448 --lon2 -111.5595 --resolution 10
+
+# Custom output name
+python download_depth_map.py --bounds 40.650,40.670,-111.520,-111.500 --resolution 10 --output park_city_north.png
+```
+
+Options:
+- `--resolution`: Choose from 1m, 3m, 5m, 10m, 30m, or 60m
+- `--output`: Custom filename for the output
+- `--data-dir`: Directory for storing elevation data
 
 ## Testing
 
