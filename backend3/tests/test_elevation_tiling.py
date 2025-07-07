@@ -25,10 +25,10 @@ class TestElevationTiling(unittest.TestCase):
     
     def test_tile_key_generation(self):
         """Test that tile keys are generated correctly"""
-        # Test exact tile boundaries
-        self.assertEqual(self.lib._get_tile_key(40.00, -111.00), "4000_-11100")
-        # Note: 40.01 / 0.01 = 4000.9999... due to floating point, floor = 4000
-        self.assertEqual(self.lib._get_tile_key(40.01, -111.01), "4000_-11101")
+        # Test exact tile boundaries - now go to lower tile
+        self.assertEqual(self.lib._get_tile_key(40.00, -111.00), "3999_-11101")
+        # 40.01 is exact boundary, goes to lower tile
+        self.assertEqual(self.lib._get_tile_key(40.01, -111.01), "4000_-11102")
         
         # Test points within tiles
         self.assertEqual(self.lib._get_tile_key(40.005, -111.005), "4000_-11101")
@@ -39,7 +39,7 @@ class TestElevationTiling(unittest.TestCase):
         
         # Test edge cases
         self.assertEqual(self.lib._get_tile_key(40.0099, -111.0099), "4000_-11101")
-        self.assertEqual(self.lib._get_tile_key(40.0100, -111.0100), "4000_-11101")
+        self.assertEqual(self.lib._get_tile_key(40.0100, -111.0100), "4000_-11102")
     
     def test_tile_bounds_calculation(self):
         """Test that tile bounds are calculated correctly"""
@@ -139,8 +139,8 @@ class TestElevationBoundaryConditions(unittest.TestCase):
         key2 = self.lib._get_tile_key(40.01, -111.01)
         self.assertEqual(key1, key2)  # Should be consistent
         
-        # Due to floating point, 40.01 / 0.01 = 4000.999..., floor = 4000
-        self.assertEqual(key1, "4000_-11101")
+        # With our fix, exact boundaries go to lower tile
+        self.assertEqual(key1, "4000_-11102")
     
     def test_tiny_area_single_tile(self):
         """Test that a tiny area within one tile only loads one tile"""

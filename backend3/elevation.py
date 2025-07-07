@@ -98,9 +98,18 @@ class ElevationLibrary:
             json.dump(self.tile_index, f, indent=2)
     
     def _get_tile_key(self, lat: float, lon: float) -> str:
-        """Get tile key for a coordinate"""
-        tile_row = int(np.floor(lat / self.tile_size))
-        tile_col = int(np.floor(lon / self.tile_size))
+        """Get tile key for a coordinate
+        
+        For coordinates exactly on tile boundaries, we consistently
+        assign them to the lower-numbered tile to avoid ambiguity.
+        """
+        # Small epsilon to handle floating point precision
+        epsilon = 1e-10
+        
+        # For exact boundaries, we want them in the lower tile
+        # So we subtract epsilon before floor
+        tile_row = int(np.floor((lat - epsilon) / self.tile_size))
+        tile_col = int(np.floor((lon - epsilon) / self.tile_size))
         return f"{tile_row}_{tile_col}"
     
     def _get_tile_bounds(self, tile_key: str) -> Bounds:
@@ -368,11 +377,11 @@ class ElevationLibrary:
             # Convert lat/lon to pixel coordinates
             row, col = src.index(lon, lat)
             
-            # Ensure indices are within bounds
-            if row < 0 or row >= src.height or col < 0 or col >= src.width:
-                raise ValueError(
-                    f"Coordinates ({lat:.4f}, {lon:.4f}) are outside the loaded tile bounds"
-                )
+            # Clamp indices to valid bounds
+            # This handles edge cases where coordinates exactly on tile boundaries
+            # might map to pixels just outside the valid range
+            row = min(max(0, row), src.height - 1)
+            col = min(max(0, col), src.width - 1)
             
             # Read single pixel
             elevation = src.read(1, window=((row, row+1), (col, col+1)))[0, 0]

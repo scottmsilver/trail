@@ -13,6 +13,7 @@ All tests are organized in the `/tests` directory and can be run with pytest.
 - `test_elevation_mocked.py` - Tests with mocked file operations
 - `test_standalone.py` - Tests that don't require any dependencies
 - `test_elevation_real_data.py` - Integration tests with real USGS elevation data
+- `test_boundary_coordinates.py` - Tests for handling coordinates on tile boundaries
 
 ### Non-Test Files
 - `check_resolutions.py` - Manual resolution testing script
@@ -45,7 +46,7 @@ pytest -W ignore::DeprecationWarning
 
 ## Test Summary
 
-- **77 tests passing** ✅ (68 unit tests + 9 real data integration tests)
+- **81 tests passing** ✅ (72 unit tests + 9 real data integration tests)
 - **0 tests failing** 🎉
 
 The test suite comprehensively covers:

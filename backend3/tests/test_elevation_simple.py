@@ -143,11 +143,14 @@ class TestElevationLoadRemoveFind(unittest.TestCase):
     def test_finding_correct_tile_for_coordinate(self):
         """Test that correct tile is found for given coordinates"""
         # Test various coordinates and their expected tiles
+        # Note: coordinates exactly on boundaries go to the lower-numbered tile
         test_cases = [
-            (40.000, -111.000, "4000_-11100"),
+            (40.000, -111.000, "3999_-11101"),  # Exact boundary -> lower tile
             (40.005, -111.005, "4000_-11101"),
             (40.655, -111.505, "4065_-11151"),
             (-40.005, -111.005, "-4001_-11101"),
+            (40.001, -111.001, "4000_-11101"),  # Just inside tile
+            (39.999, -110.999, "3999_-11100"),  # Just inside lower tile
         ]
         
         for lat, lon, expected_key in test_cases:

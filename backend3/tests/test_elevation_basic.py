@@ -219,23 +219,25 @@ class TestTileKeyGeneration(unittest.TestCase):
     
     def test_positive_coordinates(self):
         """Test tile keys for positive coordinates"""
-        self.assertEqual(self.lib._get_tile_key(40.00, -111.00), "4000_-11100")
+        # Exact boundaries now go to lower tile
+        self.assertEqual(self.lib._get_tile_key(40.00, -111.00), "3999_-11101")
         self.assertEqual(self.lib._get_tile_key(40.005, -111.005), "4000_-11101")
         self.assertEqual(self.lib._get_tile_key(40.009, -111.009), "4000_-11101")
-        # Note: 40.01 has floating point issues, actually gives 4000
-        self.assertEqual(self.lib._get_tile_key(40.01, -111.01), "4000_-11101")
+        # 40.01 boundary goes to lower tile
+        self.assertEqual(self.lib._get_tile_key(40.01, -111.01), "4000_-11102")
     
     def test_negative_coordinates(self):
         """Test tile keys for negative coordinates"""
         self.assertEqual(self.lib._get_tile_key(-40.005, -111.005), "-4001_-11101")
-        self.assertEqual(self.lib._get_tile_key(-40.00, 111.00), "-4000_11100")
+        # Exact boundary goes to lower tile
+        self.assertEqual(self.lib._get_tile_key(-40.00, 111.00), "-4001_11099")
     
     def test_edge_cases(self):
         """Test edge cases for tile boundaries"""
         # Just below tile boundary
         self.assertEqual(self.lib._get_tile_key(40.0099, -111.0099), "4000_-11101")
-        # Exactly on tile boundary (but floating point makes it just below)
-        self.assertEqual(self.lib._get_tile_key(40.0100, -111.0100), "4000_-11101")
+        # Exactly on tile boundary goes to lower tile
+        self.assertEqual(self.lib._get_tile_key(40.0100, -111.0100), "4000_-11102")
         # Just above tile boundary
         self.assertEqual(self.lib._get_tile_key(40.0101, -111.0101), "4001_-11102")
 
