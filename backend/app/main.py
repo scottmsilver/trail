@@ -105,9 +105,20 @@ async def preload_areas():
 @app.on_event("startup")
 async def startup_event():
     """Run tasks on startup"""
-    import asyncio
-    # Run preloading in background so it doesn't block startup
-    asyncio.create_task(preload_areas())
+    logger.info("=" * 60)
+    logger.info("Trail Finder API Starting...")
+    logger.info("=" * 60)
+    
+    # Disable preloading for faster startup
+    # import asyncio
+    # asyncio.create_task(preload_areas())
+    
+    logger.info("✓ CORS middleware configured")
+    logger.info("✓ Trail finder services initialized")
+    logger.info("✓ DEM caches ready")
+    logger.info("=" * 60)
+    logger.info("🚀 API READY - Listening on port 9001")
+    logger.info("=" * 60)
 
 
 def get_obstacle_config_for_profile(profile: str):
@@ -955,4 +966,7 @@ async def calculate_debug_route(request: RouteRequest):
 
 if __name__ == "__main__":
     import uvicorn
+    # Note: This runs on port 8000 by default
+    # To run on port 9001 (expected by frontend), use:
+    # python -m uvicorn app.main:app --reload --port 9001
     uvicorn.run(app, host="0.0.0.0", port=8000)

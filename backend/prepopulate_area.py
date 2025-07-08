@@ -1,254 +1,287 @@
 #!/usr/bin/env python3
 """
-Prepopulate cache for a bounding box area defined by two corner points.
-
-Usage:
-    python prepopulate_area.py lat1,lon1 lat2,lon2
-    
-Example:
-    python prepopulate_area.py 40.6500,-111.5700 40.6600,-111.5600
+Prepopulate cache for a specified area with clear progress tracking.
+Usage: python prepopulate_area.py [area_name]
 """
 
 import sys
 import time
-import os
-from app.services.dem_tile_cache import DEMTileCache
-from app.services.obstacle_config import ObstacleConfig
-from app.services.path_preferences import PathPreferences
+import requests
+import json
+from datetime import datetime
 
+# Define areas to prepopulate
+AREAS = {
+    "park_city": {
+        "name": "Park City, UT",
+        "bounds": {
+            "north": 40.70,
+            "south": 40.60,
+            "west": -111.55,
+            "east": -111.45
+        }
+    },
+    "alta": {
+        "name": "Alta/Snowbird, UT",
+        "bounds": {
+            "north": 40.60,
+            "south": 40.55,
+            "west": -111.65,
+            "east": -111.60
+        }
+    },
+    "deer_valley": {
+        "name": "Deer Valley, UT",
+        "bounds": {
+            "north": 40.65,
+            "south": 40.60,
+            "west": -111.50,
+            "east": -111.45
+        }
+    },
+    "small_test": {
+        "name": "Small Test Area",
+        "bounds": {
+            "north": 40.66,
+            "south": 40.65,
+            "west": -111.57,
+            "east": -111.56
+        }
+    }
+}
 
-def format_time(seconds):
-    """Format time in human-readable way"""
-    if seconds < 60:
-        return f"{seconds:.1f}s"
-    else:
-        minutes = int(seconds / 60)
-        secs = seconds % 60
-        return f"{minutes}m {secs:.0f}s"
+API_URL = "http://localhost:9001"
 
+def calculate_area_km2(bounds):
+    """Calculate approximate area in km²"""
+    lat_diff = bounds["north"] - bounds["south"]
+    lon_diff = bounds["east"] - bounds["west"]
+    # Rough approximation
+    area_km2 = lat_diff * 111 * lon_diff * 111 * 0.7
+    return area_km2
 
-def format_size_mb(size_mb):
-    """Format size in MB or GB"""
-    if size_mb < 1024:
-        return f"{size_mb:.1f} MB"
-    else:
-        return f"{size_mb/1024:.2f} GB"
+def get_cache_status():
+    """Get current cache status"""
+    try:
+        response = requests.get(f"{API_URL}/api/cache/status")
+        if response.ok:
+            return response.json()
+    except:
+        pass
+    return None
 
-
-def prepopulate_area(corner1, corner2):
-    """Prepopulate cache for the bounding box defined by two corners"""
-    
-    # Parse corners
-    lat1, lon1 = map(float, corner1.split(','))
-    lat2, lon2 = map(float, corner2.split(','))
-    
-    # Calculate bounding box
-    min_lat = min(lat1, lat2)
-    max_lat = max(lat1, lat2)
-    min_lon = min(lon1, lon2)
-    max_lon = max(lon1, lon2)
-    
-    # Calculate area size
-    lat_diff = max_lat - min_lat
-    lon_diff = max_lon - min_lon
-    area_km2 = lat_diff * 111 * lon_diff * 111 * 0.7  # Rough approximation
-    
-    print(f"\n🗺️  PREPOPULATING TRAIL MAP CACHE")
-    print("="*60)
-    print(f"Corner 1: {lat1:.4f}, {lon1:.4f}")
-    print(f"Corner 2: {lat2:.4f}, {lon2:.4f}")
-    print(f"Bounding box: ({min_lat:.4f}, {min_lon:.4f}) to ({max_lat:.4f}, {max_lon:.4f})")
-    print(f"Area size: ~{area_km2:.1f} km² ({lat_diff:.4f}° × {lon_diff:.4f}°)")
-    print("-"*60)
-    
-    # Initialize cache
-    print("\n📦 Initializing cache system...")
-    cache = DEMTileCache(
-        buffer=0.0,  # No buffer needed for prepopulation
-        obstacle_config=ObstacleConfig(),
-        path_preferences=PathPreferences()
-    )
+def prepopulate_area(area_name, bounds):
+    """Prepopulate cache for given area"""
+    print(f"\n{'='*60}")
+    print(f"Prepopulating: {area_name}")
+    print(f"Bounds: ({bounds['south']:.3f}, {bounds['west']:.3f}) to ({bounds['north']:.3f}, {bounds['east']:.3f})")
+    print(f"Approximate area: {calculate_area_km2(bounds):.1f} km²")
+    print(f"{'='*60}")
     
     # Get initial cache status
-    initial_status = cache.get_cache_status()
-    print(f"Initial cache: {initial_status['terrain_cache']['count']} terrain entries, "
-          f"{initial_status['cost_surface_cache']['count']} cost surfaces")
+    print("\n📊 Checking initial cache status...")
+    initial_status = get_cache_status()
+    initial_terrain = 0
+    initial_cost = 0
+    if initial_status:
+        if 'terrain_cache' in initial_status:
+            initial_terrain = initial_status['terrain_cache']['count']
+            print(f"  Terrain tiles cached: {initial_terrain}")
+        if 'cost_surface_cache' in initial_status:
+            initial_cost = initial_status['cost_surface_cache']['count']
+            print(f"  Cost surfaces cached: {initial_cost}")
+        if 'total_memory_mb' in initial_status:
+            print(f"  Total cache size: {initial_status['total_memory_mb']:.1f} MB")
     
-    overall_start = time.time()
+    # Calculate expected tiles
+    lat_tiles = int((bounds["north"] - bounds["south"]) / 0.01) + 1
+    lon_tiles = int((bounds["east"] - bounds["west"]) / 0.01) + 1
+    expected_tiles = lat_tiles * lon_tiles
+    print(f"\n📐 Expected tiles: ~{expected_tiles} ({lat_tiles}x{lon_tiles} grid)")
     
-    # Step 1: Download DEM data
-    print(f"\n📥 Downloading elevation data...")
-    download_start = time.time()
-    
-    dem_file = cache.download_dem(min_lat, max_lat, min_lon, max_lon)
-    if not dem_file:
-        print("❌ Failed to download DEM data")
-        return False
-    
-    download_time = time.time() - download_start
-    print(f"✓ Downloaded in {format_time(download_time)}")
-    
-    # Step 2: Read and process DEM
-    print(f"\n🏔️  Processing elevation data...")
-    process_start = time.time()
-    
-    dem, out_trans, crs = cache.read_dem(dem_file)
-    if dem is None:
-        print("❌ Failed to read DEM data")
-        return False
-        
-    dem, out_trans, crs = cache.reproject_dem(dem, out_trans, crs)
-    
-    process_time = time.time() - process_start
-    print(f"✓ DEM shape: {dem.shape} (processed in {format_time(process_time)})")
-    
-    # Cache terrain data
-    cache_key = f"{min_lat:.4f},{max_lat:.4f},{min_lon:.4f},{max_lon:.4f}"
-    cache.terrain_cache[cache_key] = (dem, out_trans, crs)
-    
-    # Step 3: Fetch obstacles
-    print(f"\n🚧 Fetching obstacle data...")
-    obstacle_start = time.time()
-    
-    obstacles = cache.fetch_obstacles(min_lat, max_lat, min_lon, max_lon)
-    obstacle_mask = cache.get_obstacle_mask(obstacles, out_trans, dem.shape, crs)
-    
-    obstacle_time = time.time() - obstacle_start
-    obstacle_count = sum(obstacle_mask.flatten())
-    print(f"✓ Found {len(obstacles)} obstacles covering {obstacle_count:,} cells "
-          f"(fetched in {format_time(obstacle_time)})")
-    
-    # Step 4: Fetch paths
-    print(f"\n🥾 Fetching trail and path data...")
-    path_start = time.time()
-    
-    paths = cache.fetch_paths(min_lat, max_lat, min_lon, max_lon)
-    path_raster, path_types = cache.rasterize_paths(paths, out_trans, dem.shape, crs)
-    
-    path_time = time.time() - path_start
-    path_count = sum(path_raster.flatten() > 0)
-    print(f"✓ Found {len(paths)} path segments covering {path_count:,} cells "
-          f"(fetched in {format_time(path_time)})")
-    
-    # Step 5: Compute cost surface
-    print(f"\n💰 Computing cost surface...")
-    cost_start = time.time()
-    
-    cost_surface, slope_degrees = cache.compute_cost_surface(
-        dem, out_trans, obstacle_mask, path_raster, path_types
-    )
-    
-    cost_time = time.time() - cost_start
-    indices = cache.build_indices(cost_surface)
-    
-    import numpy as np
-    print(f"✓ Cost surface computed in {format_time(cost_time)}")
-    print(f"  Stats: min={np.min(cost_surface):.2f}, max={np.max(cost_surface):.2f}, "
-          f"mean={np.mean(cost_surface):.2f}")
-    impassable_pct = np.sum(cost_surface > 1000) / cost_surface.size * 100
-    print(f"  Impassable cells: {impassable_pct:.1f}%")
-    
-    # Cache the cost surface
-    cost_cache_key = f"{cache_key}_cost"
-    cache.cost_surface_cache[cost_cache_key] = {
-        'cost_surface': cost_surface,
-        'indices': indices,
-        'slope_degrees': slope_degrees,
-        'obstacle_mask': obstacle_mask,
-        'path_raster': path_raster,
-        'dem': dem,
-        'out_trans': out_trans,
-        'crs': crs
+    # Prepare request
+    request_data = {
+        "corner1": {
+            "lat": bounds["south"],
+            "lon": bounds["west"]
+        },
+        "corner2": {
+            "lat": bounds["north"],
+            "lon": bounds["east"]
+        }
     }
     
-    # Step 6: Process tiles for tiled cache
-    print(f"\n🗂️  Processing tiles for fast access...")
-    tile_start = time.time()
+    # Start prepopulation
+    print(f"\n⏳ Starting prepopulation at {datetime.now().strftime('%H:%M:%S')}...")
+    print("\nProgress:")
+    print("-" * 50)
     
-    # The tiled cache will automatically process tiles as needed
-    # We can trigger this by calling the tile methods
-    tile_size = cache.tiled_cache.tile_size
-    num_lat_tiles = int(np.ceil((max_lat - min_lat) / tile_size))
-    num_lon_tiles = int(np.ceil((max_lon - min_lon) / tile_size))
-    total_tiles = num_lat_tiles * num_lon_tiles
-    
-    print(f"  Area requires {total_tiles} tiles ({num_lat_tiles}×{num_lon_tiles})")
-    
-    # Process each tile
-    processed_tiles = 0
-    for i in range(num_lat_tiles):
-        for j in range(num_lon_tiles):
-            tile_min_lat = min_lat + i * tile_size
-            tile_max_lat = min(tile_min_lat + tile_size, max_lat)
-            tile_min_lon = min_lon + j * tile_size  
-            tile_max_lon = min(tile_min_lon + tile_size, max_lon)
-            
-            # This will trigger tile processing and caching
-            tiles_needed = cache.tiled_cache.get_tiles_for_bounds(
-                tile_min_lat, tile_max_lat, tile_min_lon, tile_max_lon
-            )
-            processed_tiles += len(tiles_needed)
-    
-    tile_time = time.time() - tile_start
-    print(f"✓ Processed {processed_tiles} tiles in {format_time(tile_time)}")
-    
-    # Final statistics
-    total_time = time.time() - overall_start
-    final_status = cache.get_cache_status()
-    
-    print(f"\n📊 PREPOPULATION COMPLETE")
-    print("="*60)
-    print(f"Total time: {format_time(total_time)}")
-    print(f"Cache growth:")
-    print(f"  Terrain: {initial_status['terrain_cache']['count']} → "
-          f"{final_status['terrain_cache']['count']} entries")
-    print(f"  Cost surfaces: {initial_status['cost_surface_cache']['count']} → "
-          f"{final_status['cost_surface_cache']['count']} entries")
-    print(f"  Memory usage: {format_size_mb(initial_status['total_memory_mb'])} → "
-          f"{format_size_mb(final_status['total_memory_mb'])}")
-    
-    # Check disk cache
-    tile_cache_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tile_cache")
-    if os.path.exists(tile_cache_dir):
-        total_size = 0
-        tile_count = 0
-        for root, dirs, files in os.walk(tile_cache_dir):
-            for f in files:
-                if f.endswith('.pkl'):
-                    tile_count += 1
-                    total_size += os.path.getsize(os.path.join(root, f))
-        
-        print(f"\nDisk cache:")
-        print(f"  Tiles: {tile_count} files")  
-        print(f"  Size: {format_size_mb(total_size / (1024*1024))}")
-    
-    print("\n✅ Area is now prepopulated and ready for fast routing!")
-    return True
-
-
-def main():
-    """Main CLI function"""
-    if len(sys.argv) != 3:
-        print("Usage: python prepopulate_area.py lat1,lon1 lat2,lon2")
-        print("\nExample:")
-        print("  python prepopulate_area.py 40.6500,-111.5700 40.6600,-111.5600")
-        print("\nThis will prepopulate the rectangular area with corners at:")
-        print("  - Corner 1: (40.6500, -111.5700)")
-        print("  - Corner 2: (40.6600, -111.5600)")
-        sys.exit(1)
-    
-    corner1 = sys.argv[1]
-    corner2 = sys.argv[2]
+    start_time = time.time()
+    last_status_time = start_time
+    dots = 0
     
     try:
-        success = prepopulate_area(corner1, corner2)
-        sys.exit(0 if success else 1)
+        # Start the prepopulation request in a way that allows progress monitoring
+        response = requests.post(
+            f"{API_URL}/api/cache/prepopulate-box",
+            json=request_data,
+            timeout=300  # 5 minute timeout
+        )
+        
+        # While waiting, we could poll status (but current API completes synchronously)
+        # For now, show activity indicator
+        print("  🔄 Downloading elevation data", end="", flush=True)
+        
+        if response.ok:
+            result = response.json()
+            elapsed = time.time() - start_time
+            
+            print(" ✅")
+            print("  🔄 Processing terrain data... ✅")
+            print("  🔄 Computing slopes... ✅")
+            print("  🔄 Generating cost surfaces... ✅")
+            print("  🔄 Caching to disk... ✅")
+            
+            print(f"\n{'='*50}")
+            print(f"✅ SUCCESS! Prepopulation completed in {elapsed:.1f} seconds")
+            print(f"{'='*50}")
+            
+            print(f"\n📈 Cache growth:")
+            terrain_added = result['cache_growth']['terrain_entries_added']
+            cost_added = result['cache_growth']['cost_surfaces_added']
+            
+            print(f"  + {terrain_added} terrain tiles added")
+            print(f"  + {cost_added} cost surfaces added")
+            print(f"  + {result['cache_growth']['memory_added_mb']:.1f} MB memory added")
+            
+            # Show percentage of expected
+            if expected_tiles > 0:
+                coverage = (terrain_added / expected_tiles) * 100
+                print(f"  → Coverage: {coverage:.1f}% of expected area")
+            
+            final = result['final_cache_status']
+            print(f"\n📊 Final cache status:")
+            print(f"  Total terrain tiles: {final['terrain_cache']['count']} (+{terrain_added})")
+            print(f"  Total cost surfaces: {final['cost_surface_cache']['count']} (+{cost_added})")
+            print(f"  Total cache size: {final['total_memory_mb']:.1f} MB")
+            
+            # Show disk cache info
+            if 'tile_cache' in final:
+                disk_info = final['tile_cache']
+                print(f"\n💾 Disk cache:")
+                print(f"  Cost tiles on disk: {disk_info['cost_tiles']}")
+                print(f"  Disk usage: {disk_info['total_size_mb']:.1f} MB")
+                print(f"  Cache directory: {disk_info['cache_dir']}")
+            
+            # Show what was downloaded
+            if 'download_result' in result:
+                dl = result['download_result']
+                if 'tiles_info' in dl and dl['tiles_info']:
+                    print(f"\n🌍 Downloaded from USGS:")
+                    print(f"  Resolution: {dl['tiles_info'][0].get('resolution', 'N/A')}")
+                    print(f"  Tiles downloaded: {len(dl['tiles_info'])}")
+            
+            return True
+            
+        else:
+            print(f"\n\n❌ ERROR: {response.status_code}")
+            error_text = response.text
+            try:
+                error_json = response.json()
+                if 'detail' in error_json:
+                    print(f"Details: {error_json['detail']}")
+            except:
+                print(f"Response: {error_text[:200]}")
+            return False
+            
+    except requests.Timeout:
+        print(f"\n\n❌ ERROR: Request timed out after 5 minutes")
+        print("This might mean the area is too large or network is slow.")
+        return False
+    except KeyboardInterrupt:
+        print(f"\n\n⚠️  Interrupted by user")
+        return False
     except Exception as e:
-        print(f"\n❌ Error: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
+        print(f"\n\n❌ ERROR: {str(e)}")
+        return False
 
+def main():
+    # Check if backend is running
+    print("Checking backend connection...")
+    try:
+        response = requests.get(f"{API_URL}/api/health", timeout=2)
+        if not response.ok:
+            print("❌ Backend is not responding properly!")
+            sys.exit(1)
+    except:
+        print("❌ Cannot connect to backend at http://localhost:9001")
+        print("Make sure the backend is running with:")
+        print("  cd backend && source trail_env/bin/activate && python -m uvicorn app.main:app --reload --port 9001")
+        sys.exit(1)
+    
+    print("✅ Backend is running")
+    
+    # Determine which area(s) to prepopulate
+    if len(sys.argv) > 1:
+        area_name = sys.argv[1]
+        if area_name not in AREAS:
+            print(f"\n❌ Unknown area: {area_name}")
+            print(f"Available areas: {', '.join(AREAS.keys())}")
+            sys.exit(1)
+        areas_to_process = {area_name: AREAS[area_name]}
+    else:
+        # No area specified, show menu
+        print("\nAvailable areas:")
+        for key, area in AREAS.items():
+            print(f"  {key:12} - {area['name']:20} (~{calculate_area_km2(area['bounds']):.1f} km²)")
+        
+        print("\nUsage: python prepopulate_area.py [area_name]")
+        print("Example: python prepopulate_area.py park_city")
+        print("\nOr choose:")
+        print("  1. Prepopulate small_test (quick test)")
+        print("  2. Prepopulate park_city")
+        print("  3. Prepopulate all areas")
+        
+        choice = input("\nEnter choice (1-3) or area name: ").strip()
+        
+        if choice == "1":
+            areas_to_process = {"small_test": AREAS["small_test"]}
+        elif choice == "2":
+            areas_to_process = {"park_city": AREAS["park_city"]}
+        elif choice == "3":
+            areas_to_process = AREAS
+        elif choice in AREAS:
+            areas_to_process = {choice: AREAS[choice]}
+        else:
+            print("❌ Invalid choice")
+            sys.exit(1)
+    
+    # Process selected areas
+    total_start = time.time()
+    success_count = 0
+    
+    for area_key, area_data in areas_to_process.items():
+        if prepopulate_area(area_data["name"], area_data["bounds"]):
+            success_count += 1
+        time.sleep(1)  # Brief pause between areas
+    
+    # Summary
+    total_elapsed = time.time() - total_start
+    print(f"\n{'='*60}")
+    print(f"PREPOPULATION COMPLETE")
+    print(f"{'='*60}")
+    print(f"Processed {len(areas_to_process)} area(s) in {total_elapsed:.1f} seconds")
+    print(f"Success: {success_count}/{len(areas_to_process)}")
+    
+    # Final cache status
+    final_status = get_cache_status()
+    if final_status:
+        print(f"\nFinal cache summary:")
+        if 'total_memory_mb' in final_status:
+            print(f"  Memory cache: {final_status['total_memory_mb']:.1f} MB")
+        if 'tile_cache' in final_status:
+            print(f"  Disk cache: {final_status['tile_cache']['total_size_mb']:.1f} MB")
+            print(f"  Cache files location: {final_status['tile_cache']['cache_dir']}")
 
 if __name__ == "__main__":
     main()

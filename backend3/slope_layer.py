@@ -100,16 +100,29 @@ class SlopeLayer:
         Returns:
             Dict with status and statistics
         """
-        # First check if elevation data is available
+        # Expand bounds to align with tile boundaries
+        south_tile = int(np.floor(bounds.south / self.tile_size))
+        north_tile = int(np.floor(bounds.north / self.tile_size))
+        west_tile = int(np.floor(bounds.west / self.tile_size))
+        east_tile = int(np.floor(bounds.east / self.tile_size))
+        
+        # Create aligned bounds that cover complete tiles
+        aligned_bounds = Bounds(
+            south=south_tile * self.tile_size,
+            north=(north_tile + 1) * self.tile_size,
+            west=west_tile * self.tile_size,
+            east=(east_tile + 1) * self.tile_size
+        )
+        
+        # Check if elevation data is available for the aligned bounds
         try:
-            elev_array, elev_meta = self.elevation_lib.get_elevation_array(bounds)
+            elev_array, elev_meta = self.elevation_lib.get_elevation_array(aligned_bounds)
         except ValueError as e:
             return {
                 "status": "error",
-                "message": f"Elevation data not available: {str(e)}"
+                "message": f"Elevation data not available for aligned bounds: {str(e)}"
             }
         
-        # Compute slopes for the entire area
         # Calculate pixel size in meters from the transform
         transform = elev_meta.get("transform", {})
         if transform:
@@ -117,7 +130,7 @@ class SlopeLayer:
             pixel_width_deg = abs(transform.get("a", 0))
             pixel_height_deg = abs(transform.get("e", 0))
             # Convert to meters (approximate at this latitude)
-            lat_center = (bounds.north + bounds.south) / 2
+            lat_center = (aligned_bounds.north + aligned_bounds.south) / 2
             meters_per_degree_lat = 111320.0
             meters_per_degree_lon = 111320.0 * np.cos(np.radians(lat_center))
             pixel_width_m = pixel_width_deg * meters_per_degree_lon
@@ -127,10 +140,11 @@ class SlopeLayer:
             # Fallback calculation
             pixel_size_m = self.resolution
         
-        slope_data = self._compute_slopes(elev_array, bounds, pixel_size_m)
+        # Compute slopes for the aligned area
+        slope_data = self._compute_slopes(elev_array, aligned_bounds, pixel_size_m)
         
-        # Now tile the results using same tiling as elevation Layer 2
-        tiles_created = self._create_slope_tiles(slope_data, bounds)
+        # Create tiles - now they will align properly
+        tiles_created = self._create_slope_tiles_aligned(slope_data, aligned_bounds)
         
         return {
             "status": "success",
@@ -140,6 +154,12 @@ class SlopeLayer:
                 "south": bounds.south,
                 "east": bounds.east,
                 "west": bounds.west
+            },
+            "aligned_bounds": {
+                "north": aligned_bounds.north,
+                "south": aligned_bounds.south,
+                "east": aligned_bounds.east,
+                "west": aligned_bounds.west
             },
             "resolution_m": self.resolution
         }
@@ -270,6 +290,79 @@ class SlopeLayer:
                 self._save_tile(
                     tile_key, 
                     tile_slope, 
+                    tile_slope_change,
+                    tile_aspect,
+                    tile_bounds
+                )
+                
+                tiles_created += 1
+        
+        self._save_index()
+        return tiles_created
+    
+    def _create_slope_tiles_aligned(self, slope_data: SlopeData, aligned_bounds: Bounds) -> int:
+        """Create tiles from computed slope data with proper alignment"""
+        tiles_created = 0
+        
+        # Get the tile boundaries
+        south_tile = int(np.floor(aligned_bounds.south / self.tile_size))
+        north_tile = int(np.floor(aligned_bounds.north / self.tile_size))
+        west_tile = int(np.floor(aligned_bounds.west / self.tile_size))
+        east_tile = int(np.floor(aligned_bounds.east / self.tile_size))
+        
+        # Get array dimensions and geographic extents
+        height, width = slope_data.slope.shape
+        geo_height = aligned_bounds.north - aligned_bounds.south
+        geo_width = aligned_bounds.east - aligned_bounds.west
+        
+        # Pixels per degree
+        pixels_per_deg_lat = height / geo_height
+        pixels_per_deg_lon = width / geo_width
+        
+        # Create each tile
+        for lat_idx in range(south_tile, north_tile):
+            for lon_idx in range(west_tile, east_tile):
+                # Tile geographic bounds
+                tile_south = lat_idx * self.tile_size
+                tile_north = (lat_idx + 1) * self.tile_size
+                tile_west = lon_idx * self.tile_size
+                tile_east = (lon_idx + 1) * self.tile_size
+                
+                tile_bounds = Bounds(
+                    south=tile_south,
+                    north=tile_north,
+                    west=tile_west,
+                    east=tile_east
+                )
+                
+                # Calculate pixel coordinates for this tile
+                # Note: pixel coordinates are from top-left corner
+                px_north = int(round((aligned_bounds.north - tile_north) * pixels_per_deg_lat))
+                px_south = int(round((aligned_bounds.north - tile_south) * pixels_per_deg_lat))
+                px_west = int(round((tile_west - aligned_bounds.west) * pixels_per_deg_lon))
+                px_east = int(round((tile_east - aligned_bounds.west) * pixels_per_deg_lon))
+                
+                # Ensure within bounds
+                px_north = max(0, min(height, px_north))
+                px_south = max(0, min(height, px_south))
+                px_west = max(0, min(width, px_west))
+                px_east = max(0, min(width, px_east))
+                
+                # Extract tile data
+                tile_slope = slope_data.slope[px_north:px_south, px_west:px_east]
+                tile_slope_change = slope_data.slope_change[px_north:px_south, px_west:px_east]
+                tile_aspect = slope_data.aspect[px_north:px_south, px_west:px_east]
+                
+                if tile_slope.size == 0:
+                    continue
+                
+                # Create tile key
+                tile_key = f"{lat_idx}_{lon_idx}"
+                
+                # Save tile with correct bounds
+                self._save_tile(
+                    tile_key,
+                    tile_slope,
                     tile_slope_change,
                     tile_aspect,
                     tile_bounds
@@ -565,6 +658,26 @@ class SlopeLayer:
             "status": "success",
             "tiles_removed": tiles_removed
         }
+    
+    def get_tile_info(self, lat: float, lon: float) -> Optional[Dict[str, Any]]:
+        """
+        Get information about the tile containing a coordinate.
+        
+        Args:
+            lat: Latitude
+            lon: Longitude
+            
+        Returns:
+            Dict with tile info or None if not loaded
+        """
+        tile_key = self._get_tile_key(lat, lon)
+        
+        if tile_key not in self.index["tiles"]:
+            return None
+        
+        info = self.index["tiles"][tile_key].copy()
+        info["tile_key"] = tile_key
+        return info
     
     def list_computed_areas(self) -> Dict[str, Any]:
         """List all areas with computed slope data"""

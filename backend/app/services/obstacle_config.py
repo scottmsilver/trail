@@ -79,7 +79,7 @@ class ObstacleConfig:
             'barrier': 2000,        # Fences, walls - mostly impassable
             
             # Default
-            'default': 1000         # Unknown obstacles
+            'default': 100          # Unknown obstacles - reduced from 1000
         }
     
     @staticmethod
@@ -92,17 +92,17 @@ class ObstacleConfig:
         - Ensures 20° trail is NOT cheaper than 15° off-path
         """
         return [
-            (0, 1.0),      # 0° - flat
-            (5, 1.3),      # 5° - gentle slope  
-            (10, 1.8),     # 10° - noticeable slope
-            (15, 3.0),     # 15° - moderate slope
-            (20, 10.0),    # 20° - steep (increased from 6.0)
-            (25, 25.0),    # 25° - very steep (increased from 12.0)
-            (30, 60.0),    # 30° - extremely steep (increased from 30.0)
-            (35, 150.0),   # 35° - near limit (increased from 80.0)
-            (40, 400.0),   # 40° - extreme (increased from 200.0)
-            (45, 1000.0),  # 45° - barely passable (increased from 500.0)
-            (60, 5000.0),  # 60° - essentially impassable
+            (0, 1.0),       # 0° - flat
+            (5, 2.0),       # 5° - gentle slope (increased from 1.3)
+            (10, 5.0),      # 10° - noticeable slope (increased from 1.8)
+            (15, 15.0),     # 15° - moderate slope (increased from 3.0)
+            (20, 50.0),     # 20° - steep (increased from 10.0)
+            (25, 200.0),    # 25° - very steep (increased from 25.0)
+            (30, 800.0),    # 30° - extremely steep (increased from 60.0)
+            (35, 3000.0),   # 35° - near limit (increased from 150.0)
+            (40, 10000.0),  # 40° - extreme (increased from 400.0)
+            (45, 50000.0),  # 45° - barely passable (increased from 1000.0)
+            (60, 500000.0), # 60° - essentially impassable (increased from 5000.0)
         ]
     
     def get_cost_for_feature(self, feature_type: str, feature_value: str = None) -> float:

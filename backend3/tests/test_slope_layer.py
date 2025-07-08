@@ -74,6 +74,7 @@ class TestSlopeLayer(unittest.TestCase):
         elevation = 2000 + 100 * X + 50 * Y
         
         # Mock elevation data
+        # Need to ensure we cover the aligned bounds too
         mock_dem = MagicMock()
         mock_dem.rio.crs = "EPSG:4326"
         mock_dem.to_numpy.return_value = elevation
@@ -83,8 +84,15 @@ class TestSlopeLayer(unittest.TestCase):
         mock_dem.y.max.return_value = bounds.north + 0.05
         mock_get_dem.return_value = mock_dem
         
-        # First load elevation data
-        self.elev_lib.load_area(bounds)
+        # First load elevation data - need to load the aligned area
+        # The slope layer will expand bounds to tile boundaries
+        aligned_bounds = Bounds(
+            south=40.0,  # Already on tile boundary
+            north=40.01, # Will expand to 40.01
+            west=-111.01, # Already on tile boundary
+            east=-111.0   # Already on tile boundary
+        )
+        self.elev_lib.load_area(aligned_bounds)
         
         # Now compute slopes
         result = self.slope_layer.compute_area(bounds)
@@ -92,6 +100,9 @@ class TestSlopeLayer(unittest.TestCase):
         self.assertEqual(result["status"], "success")
         self.assertGreater(result["tiles_created"], 0)
         self.assertEqual(result["resolution_m"], 10)
+        
+        # Check that aligned bounds were used
+        self.assertIn("aligned_bounds", result)
     
     def test_slope_calculation(self):
         """Test slope calculation accuracy"""

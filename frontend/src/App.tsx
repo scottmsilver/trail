@@ -23,6 +23,10 @@ function App() {
   const [routeOptions, setRouteOptions] = useState<RouteOptions>({ userProfile: 'default' })
   const [routeTime, setRouteTime] = useState<number | null>(null)
   const [showPrepopulate, setShowPrepopulate] = useState(false)
+  const [showCostSurface, setShowCostSurface] = useState(false)
+  const [costSurfaceBounds, setCostSurfaceBounds] = useState<{north: number, south: number, east: number, west: number} | null>(null)
+  const [costPointMode, setCostPointMode] = useState(false)
+  const [cacheProgress, setCacheProgress] = useState<{active: boolean, message: string} | null>(null)
   const mapRef = useRef<L.Map | null>(null)
 
   const handleMapClick = (coord: Coordinate) => {
@@ -202,6 +206,67 @@ function App() {
     }
   }
 
+  const handleQuickCache = async () => {
+    if (!mapRef.current) return
+
+    const bounds = mapRef.current.getBounds()
+    // Add 20% buffer to each side
+    const latBuffer = (bounds.getNorth() - bounds.getSouth()) * 0.2
+    const lonBuffer = (bounds.getEast() - bounds.getWest()) * 0.2
+    
+    const expandedBounds = {
+      north: bounds.getNorth() + latBuffer,
+      south: bounds.getSouth() - latBuffer,
+      east: bounds.getEast() + lonBuffer,
+      west: bounds.getWest() - lonBuffer
+    }
+
+    // Calculate approximate area
+    const approxAreaKm2 = (expandedBounds.north - expandedBounds.south) * 111 * 
+                         (expandedBounds.east - expandedBounds.west) * 111 * 0.7
+
+    setCacheProgress({ active: true, message: `Caching ~${approxAreaKm2.toFixed(1)} km² for current view...` })
+    
+    try {
+      const response = await fetch('http://localhost:9001/api/cache/prepopulate-box', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          corner1: { lat: expandedBounds.south, lon: expandedBounds.west },
+          corner2: { lat: expandedBounds.north, lon: expandedBounds.east },
+        }),
+      })
+
+      if (!response.ok) {
+        const errorText = await response.text()
+        console.error('Cache error response:', errorText)
+        throw new Error(`Failed to cache: ${response.statusText} - ${errorText}`)
+      }
+
+      const data = await response.json()
+      setCacheProgress({ 
+        active: false, 
+        message: `✓ Cached ${data.area.area_km2.toFixed(1)} km² (${data.cache_growth.terrain_entries_added} tiles)`
+      })
+      
+      // Clear the success message after 5 seconds
+      setTimeout(() => {
+        setCacheProgress(null)
+      }, 5000)
+      
+    } catch (err) {
+      setCacheProgress({ 
+        active: false, 
+        message: `Error: ${err instanceof Error ? err.message : 'Failed to cache area'}`
+      })
+      setTimeout(() => {
+        setCacheProgress(null)
+      }, 5000)
+    }
+  }
+
   return (
     <div className="app">
       <header className="app-header">
@@ -236,7 +301,57 @@ function App() {
             onPrepopulateClick={() => setShowPrepopulate(true)}
           />
           
+          <div className="cost-explorer-controls">
+            <button 
+              className={`btn-cost-mode ${costPointMode ? 'active' : ''}`}
+              onClick={() => {
+                setCostPointMode(!costPointMode)
+                setShowCostSurface(false)
+                setCostSurfaceBounds(null)
+              }}
+              title="Click on map to see terrain cost at any point"
+            >
+              {costPointMode ? 'Exit Cost Explorer' : 'Quick Cost Explorer'}
+            </button>
+            
+            <button 
+              className="btn-explore-cost"
+              onClick={() => {
+                if (mapRef.current) {
+                  const bounds = mapRef.current.getBounds()
+                  setCostSurfaceBounds({
+                    north: bounds.getNorth(),
+                    south: bounds.getSouth(),
+                    east: bounds.getEast(),
+                    west: bounds.getWest()
+                  })
+                  setShowCostSurface(true)
+                  setCostPointMode(false)
+                }
+              }}
+              title="Load full cost surface overlay for current view"
+              disabled={costPointMode}
+            >
+              Full Cost Overlay
+            </button>
+            
+            <button 
+              className="btn-quick-cache"
+              onClick={() => handleQuickCache()}
+              title="Cache terrain data for current view area"
+            >
+              Quick Cache View
+            </button>
+          </div>
+          
           <div className="status">{status || 'Click on the map to set start point.'}</div>
+          
+          {cacheProgress && (
+            <div className={`cache-progress ${cacheProgress.active ? 'active' : 'complete'}`}>
+              {cacheProgress.active && <span className="spinner">⏳</span>}
+              <span>{cacheProgress.message}</span>
+            </div>
+          )}
           
           <div className="coordinates">
             {(start || end) && (
@@ -314,6 +429,13 @@ function App() {
               >
                 Export GPX
               </button>
+              <button 
+                onClick={() => setShowCostSurface(!showCostSurface)} 
+                className="btn-cost-surface"
+                title="Explore cost surface visualization"
+              >
+                {showCostSurface ? 'Hide' : 'Show'} Cost Surface
+              </button>
             </div>
           )}
         </div>
@@ -327,6 +449,13 @@ function App() {
             center={mapCenter || undefined}
             onMapClick={handleMapClick}
             onMapReady={(map) => { mapRef.current = map }}
+            showCostSurface={showCostSurface}
+            onCloseCostSurface={() => {
+              setShowCostSurface(false)
+              setCostSurfaceBounds(null)
+            }}
+            costSurfaceBounds={costSurfaceBounds || undefined}
+            costPointMode={costPointMode}
           />
           <SearchBox onLocationSelect={handleLocationSelect} />
           {showPrepopulate && mapRef.current && (

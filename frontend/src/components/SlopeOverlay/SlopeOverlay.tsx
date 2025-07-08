@@ -16,7 +16,7 @@ const SlopeOverlay: React.FC<SlopeOverlayProps> = ({ enabled }) => {
   const [mapBounds, setMapBounds] = useState<L.LatLngBounds | null>(null)
   const [pluginLoaded, setPluginLoaded] = useState(false)
   
-  console.log('SlopeOverlay enabled:', enabled, 'plugin loaded:', pluginLoaded)
+  // console.log('SlopeOverlay enabled:', enabled, 'plugin loaded:', pluginLoaded)
 
   // Load leaflet.heat plugin dynamically
   useEffect(() => {
@@ -24,7 +24,7 @@ const SlopeOverlay: React.FC<SlopeOverlayProps> = ({ enabled }) => {
       const script = document.createElement('script')
       script.src = 'https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js'
       script.onload = () => {
-        console.log('Leaflet.heat plugin loaded')
+        // console.log('Leaflet.heat plugin loaded')
         setPluginLoaded(true)
       }
       script.onerror = () => {

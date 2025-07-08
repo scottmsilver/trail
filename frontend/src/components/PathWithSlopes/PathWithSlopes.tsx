@@ -8,6 +8,7 @@ interface PathPoint {
   lon: number
   elevation?: number
   slope?: number
+  path_type?: string
 }
 
 interface PathWithSlopesProps {
@@ -42,6 +43,21 @@ function getSlopeDifficulty(slope: number): string {
   if (absSlope < 20) return 'Hard'
   if (absSlope < 25) return 'Very Hard'
   return 'Extreme'
+}
+
+function getPathTypeName(pathType?: string): string {
+  if (!pathType) return 'Unknown'
+  
+  const pathTypeNames: { [key: string]: string } = {
+    'trail': 'Trail',
+    'path': 'Path',
+    'track': 'Track',
+    'footway': 'Footway',
+    'residential': 'Street',
+    'off_path': 'Off-trail',
+  }
+  
+  return pathTypeNames[pathType] || pathType.charAt(0).toUpperCase() + pathType.slice(1)
 }
 
 export default function PathWithSlopes({ path, pathWithSlopes }: PathWithSlopesProps) {
@@ -96,6 +112,7 @@ export default function PathWithSlopes({ path, pathWithSlopes }: PathWithSlopesP
             <strong>Segment {i + 1}</strong><br />
             Slope: {slope.toFixed(1)}°<br />
             Difficulty: {difficulty}<br />
+            Path: {getPathTypeName(start.path_type)}<br />
             {start.elevation && (
               <>Elevation: {Math.round(start.elevation)}m<br /></>
             )}

@@ -26,7 +26,7 @@ from app.services.tiled_dem_cache import TiledDEMCache
 import time
 
 class DEMTileCache:
-    def __init__(self, buffer=0.05, debug_mode=False, obstacle_config=None, path_preferences=None, dem_smoothing_sigma=1.0):
+    def __init__(self, buffer=0.05, debug_mode=False, obstacle_config=None, path_preferences=None, dem_smoothing_sigma=1.0, expand_ski_runs=True):
         """
         Initializes the DEMTileCache.
 
@@ -35,8 +35,10 @@ class DEMTileCache:
         - debug_mode: If True, collect detailed pathfinding debug information.
         - obstacle_config: ObstacleConfig instance for customizing obstacle handling
         - path_preferences: PathPreferences instance for preferring certain paths
+        - expand_ski_runs: If True, expand ski run lines to realistic corridor widths
         """
         self.dem_smoothing_sigma = dem_smoothing_sigma
+        self.expand_ski_runs = expand_ski_runs
         self.buffer = buffer
         self.debug_mode = debug_mode
         self.debug_data = None
@@ -63,13 +65,12 @@ class DEMTileCache:
         if os.path.exists(http_cache_path):
             http_cache_size = os.path.getsize(http_cache_path) / (1024 * 1024)  # MB
         
-        print(f"[CACHE PATHS] DEMTileCache initialized:")
-        print(f"  - HTTP cache (py3dep): {http_cache_path} ({http_cache_size:.0f} MB)")
-        print(f"  - DEM data directory: {self.dem_data_dir}")
-        print(f"  - Tile cache directory: {os.path.abspath(self.tiled_cache.cache_dir)}")
-        
+        # Only print cache info if debug mode is on
         if debug_mode:
-            print(f"DEMTileCache initialized with debug_mode=True")
+            print(f"[CACHE PATHS] DEMTileCache initialized:")
+            print(f"  - HTTP cache (py3dep): {http_cache_path} ({http_cache_size:.0f} MB)")
+            print(f"  - DEM data directory: {self.dem_data_dir}")
+            print(f"  - Tile cache directory: {os.path.abspath(self.tiled_cache.cache_dir)}")
 
     def _create_tile_aligned_cache_key(self, min_lat, max_lat, min_lon, max_lon):
         """
@@ -268,7 +269,7 @@ class DEMTileCache:
                 path_raster, path_types, path_raw_tags = self.rasterize_paths(paths, out_trans, dem.shape, crs)
 
                 # Compute Slope and Cost Surface with Obstacles and Path Preferences
-                cost_surface, slope_degrees = self.compute_cost_surface(dem, out_trans, obstacle_mask, path_raster, path_types)
+                cost_surface, slope_degrees, slope_change = self.compute_cost_surface(dem, out_trans, obstacle_mask, path_raster, path_types)
                 
                 # Build Indices for Pathfinding
                 indices = self.build_indices(cost_surface)
@@ -580,7 +581,7 @@ class DEMTileCache:
             print(f"Error fetching paths: {e}")
             return gpd.GeoDataFrame()
 
-    def rasterize_paths(self, paths, transform, dem_shape, crs):
+    def rasterize_paths(self, paths, transform, dem_shape, crs, obstacle_mask=None, expand_paths=False):
         """
         Rasterizes paths to create path preference raster.
         
@@ -660,7 +661,29 @@ class DEMTileCache:
             transform=transform,
             fill=0,  # 0 means no path
             all_touched=True,
-            dtype=np.uint8
+            dtype=np.uint16  # Support up to 65535 path IDs
+        )
+        
+        # Expand all paths to realistic widths (not just ski runs)
+        if expand_paths or self.expand_ski_runs:  # Use parameter or instance setting
+            from app.services.path_expansion import PathExpander
+            
+            # Calculate pixel size in meters
+            pixel_size_m = abs(transform.a)  # Assuming square pixels
+            
+            # Expand all paths
+            path_raster, path_types = PathExpander.expand_paths(
+                path_raster, path_types, path_raw_tags, pixel_size_m
+            )
+            
+            if self.debug_mode:
+                print(f"[PATH EXPANSION] Expanded all paths from line representation to realistic corridors")
+        
+        # Repair path connectivity (bridge small gaps)
+        # This needs to happen AFTER expansion but BEFORE cost calculation
+        from app.services.path_connectivity import PathConnectivityRepair
+        path_raster, path_types = PathConnectivityRepair.repair_path_connectivity(
+            path_raster, path_types, path_raw_tags, pixel_size_m, obstacle_mask
         )
         
         # Note: path_types now maps ID to type directly (no need to reverse)
@@ -670,11 +693,12 @@ class DEMTileCache:
     def compute_cost_surface(self, dem, out_trans, obstacle_mask, path_raster=None, path_types=None):
         """
         Computes the slope and creates the cost surface, incorporating obstacles and path preferences.
-        Now includes DEM smoothing to remove artifacts.
+        Now includes DEM smoothing to remove artifacts and slope change rate penalties.
 
         Returns:
         - cost_surface: Numpy array representing the cost of traversing each cell.
         - slope_degrees: Numpy array of slope values in degrees.
+        - slope_change: Numpy array of slope change magnitude in degrees per meter.
         """
         # DEM is already smoothed during reprojection
         # Calculate slopes directly from the DEM
@@ -683,7 +707,12 @@ class DEMTileCache:
         dzdx, dzdy = np.gradient(dem, cell_size_x, cell_size_y)
         slope_radians = np.arctan(np.sqrt(dzdx**2 + dzdy**2))
         slope_degrees = np.degrees(slope_radians)
-
+        
+        # Calculate slope change (gradient of slope)
+        # This gives us how rapidly the slope is changing
+        dslope_dx, dslope_dy = np.gradient(slope_degrees, cell_size_x, cell_size_y)
+        slope_change = np.sqrt(dslope_dx**2 + dslope_dy**2)
+        
         # Create cost surface using configuration
         cost_surface = np.ones_like(dem)
         
@@ -700,27 +729,33 @@ class DEMTileCache:
                         path_type = path_types[path_id]
                         path_multiplier = self.path_preferences.get_path_cost_multiplier(path_type)
                         
-                        # Reduce path bonus on steep slopes (>25°)
-                        # This prevents the algorithm from taking very steep trails
+                        # FIXED: Don't let path preferences override slope costs
+                        # Minimum cost should be based on slope, paths just get a small bonus
+                        # For steep slopes, being on a path helps less
                         if slope > 25:
-                            # Gradually reduce the path bonus as slope increases
-                            # At 25°: full bonus, at 35°: half bonus, at 45°: no bonus
-                            slope_factor = max(0.5, 1.0 - (slope - 25) / 20.0)
-                            effective_multiplier = 1.0 - (1.0 - path_multiplier) * slope_factor
-                            cost_surface[i, j] = base_cost * effective_multiplier
+                            # On very steep slopes, paths provide minimal benefit
+                            # At 25°: 80% of slope cost, at 45°: 95% of slope cost
+                            path_benefit = 0.8 + (slope - 25) / 100.0  # 0.8 to 1.0
+                            cost_surface[i, j] = base_cost * min(1.0, max(path_benefit, path_multiplier))
                         else:
-                            cost_surface[i, j] = base_cost * path_multiplier
+                            # On moderate slopes, paths can reduce cost but not below 50% of slope cost
+                            cost_surface[i, j] = base_cost * max(0.5, path_multiplier)
                     else:
-                        # Off-path terrain
-                        off_path_multiplier = self.path_preferences.get_path_cost_multiplier(None)
-                        cost_surface[i, j] = base_cost * off_path_multiplier
+                        # Off-path terrain - use full slope cost
+                        # Don't reduce slope penalties for off-path terrain
+                        cost_surface[i, j] = base_cost
                 else:
                     cost_surface[i, j] = base_cost
 
-        # Assign obstacle costs from configuration (obstacles override path preferences)
-        cost_surface[obstacle_mask] = self.obstacle_config.get_cost_for_feature('default')
+        # Assign obstacle costs from configuration
+        # BUT: Don't override paths (which may include bridged connections)
+        obstacle_indices = np.where(obstacle_mask)
+        for i, j in zip(obstacle_indices[0], obstacle_indices[1]):
+            # Only mark as obstacle if it's not on a path
+            if path_raster is None or path_raster[i, j] == 0:
+                cost_surface[i, j] = self.obstacle_config.get_cost_for_feature('default')
 
-        return cost_surface, slope_degrees
+        return cost_surface, slope_degrees, slope_change
 
     def build_indices(self, cost_surface):
         """
@@ -783,14 +818,15 @@ class DEMTileCache:
             obstacles = self.fetch_obstacles(min_lat, max_lat, min_lon, max_lon)
             obstacle_mask = self.get_obstacle_mask(obstacles, out_trans, dem.shape, crs)
             paths = self.fetch_paths(min_lat, max_lat, min_lon, max_lon)
-            path_raster, path_types, path_raw_tags = self.rasterize_paths(paths, out_trans, dem.shape, crs)
+            path_raster, path_types, path_raw_tags = self.rasterize_paths(paths, out_trans, dem.shape, crs, obstacle_mask, expand_paths=True)
             
             # Compute cost surface
-            cost_surface, slope_degrees = self.compute_cost_surface(dem, out_trans, obstacle_mask, path_raster, path_types)
+            cost_surface, slope_degrees, slope_change = self.compute_cost_surface(dem, out_trans, obstacle_mask, path_raster, path_types)
             
             return {
                 'cost_surface': cost_surface,
                 'slope_degrees': slope_degrees,
+                'slope_change': slope_change,
                 'transform': out_trans,
                 'crs': crs,
                 'dem': dem,
@@ -826,6 +862,7 @@ class DEMTileCache:
                 # Extract cost surface and related data
                 cost_surface = composed_data['cost_surface']
                 slope_degrees = composed_data['slope_degrees']
+                slope_change = composed_data.get('slope_change')  # Get slope change data
                 dem_composed = composed_data.get('dem')  # Get composed DEM data
                 path_raster = composed_data.get('path_raster')
                 path_types = composed_data.get('path_types')
@@ -840,7 +877,7 @@ class DEMTileCache:
                 self._composed_crs = composed_data.get('crs', crs)
                 
                 print(f"[TILE SUCCESS] Returning tiled cost surface with shape {cost_surface.shape}")
-                return cost_surface, slope_degrees, indices, dem_composed, path_raster, path_types
+                return cost_surface, slope_degrees, indices, dem_composed, path_raster, path_types, slope_change
             else:
                 print(f"[TILE] compose_tiles returned None")
                 
@@ -1711,6 +1748,25 @@ class DEMTileCache:
                             # Calculate movement cost
                             distance = sqrt2 if abs(dy) + abs(dx) == 2 else 1
                             movement_cost = terrain_cost * distance * out_trans.a  # Scale by resolution
+                            
+                            # Add uphill transition penalty if DEM is available
+                            if dem is not None:
+                                current_elevation = dem[row_current, col_current]
+                                neighbor_elevation = dem[row_neighbor, col_neighbor]
+                                elevation_gain = neighbor_elevation - current_elevation
+                                
+                                if elevation_gain > 0:  # Going uphill
+                                    # Calculate slope angle of the transition
+                                    horizontal_distance = distance * out_trans.a
+                                    uphill_slope_degrees = np.degrees(np.arctan(elevation_gain / horizontal_distance))
+                                    
+                                    # Exponential penalty for uphill transitions
+                                    # Much more aggressive penalties for any uphill movement
+                                    if uphill_slope_degrees > 2:  # Lower threshold
+                                        # More aggressive exponential formula
+                                        uphill_penalty = 1.0 + (uphill_slope_degrees / 10.0) ** 2.5
+                                        movement_cost *= uphill_penalty
+                            
                             tentative_g = current_g + movement_cost
                             
                             if neighbor not in forward_g or tentative_g < forward_g[neighbor]:
@@ -1765,6 +1821,25 @@ class DEMTileCache:
                             # Calculate movement cost
                             distance = sqrt2 if abs(dy) + abs(dx) == 2 else 1
                             movement_cost = terrain_cost * distance * out_trans.a
+                            
+                            # Add uphill transition penalty if DEM is available
+                            if dem is not None:
+                                current_elevation = dem[row_current, col_current]
+                                neighbor_elevation = dem[row_neighbor, col_neighbor]
+                                elevation_gain = neighbor_elevation - current_elevation
+                                
+                                if elevation_gain > 0:  # Going uphill
+                                    # Calculate slope angle of the transition
+                                    horizontal_distance = distance * out_trans.a
+                                    uphill_slope_degrees = np.degrees(np.arctan(elevation_gain / horizontal_distance))
+                                    
+                                    # Exponential penalty for uphill transitions
+                                    # Much more aggressive penalties for any uphill movement
+                                    if uphill_slope_degrees > 2:  # Lower threshold
+                                        # More aggressive exponential formula
+                                        uphill_penalty = 1.0 + (uphill_slope_degrees / 10.0) ** 2.5
+                                        movement_cost *= uphill_penalty
+                            
                             tentative_g = current_g + movement_cost
                             
                             if neighbor not in backward_g or tentative_g < backward_g[neighbor]:
@@ -2146,7 +2221,7 @@ class DEMTileCache:
                                                         None, None, 'EPSG:4326')
             
             if tiled_result is not None:
-                cost_surface, slope_degrees, indices, dem_composed, path_raster, path_types = tiled_result
+                cost_surface, slope_degrees, indices, dem_composed, path_raster, path_types, slope_change = tiled_result
                 out_trans = self._composed_transform if hasattr(self, '_composed_transform') else None
                 crs = self._composed_crs if hasattr(self, '_composed_crs') else 'EPSG:4326'
                 dem = dem_composed if dem_composed is not None else None
@@ -2171,7 +2246,7 @@ class DEMTileCache:
                 path_raster, path_types, path_raw_tags = self.rasterize_paths(paths, out_trans, dem.shape, crs)
                 
                 # Compute cost surface
-                cost_surface, slope_degrees = self.compute_cost_surface(dem, out_trans, obstacle_mask, path_raster, path_types)
+                cost_surface, slope_degrees, slope_change = self.compute_cost_surface(dem, out_trans, obstacle_mask, path_raster, path_types)
             
             # Convert transform to list for JSON serialization
             transform_list = [
@@ -2190,6 +2265,7 @@ class DEMTileCache:
                 # Downsample arrays
                 cost_surface_downsampled = cost_surface[::factor, ::factor]
                 slope_degrees_downsampled = slope_degrees[::factor, ::factor]
+                slope_change_downsampled = slope_change[::factor, ::factor] if slope_change is not None else None
                 dem_downsampled = dem[::factor, ::factor] if dem is not None else None
                 path_raster_downsampled = path_raster[::factor, ::factor] if path_raster is not None else None
                 
@@ -2205,6 +2281,7 @@ class DEMTileCache:
             else:
                 cost_surface_downsampled = cost_surface
                 slope_degrees_downsampled = slope_degrees
+                slope_change_downsampled = slope_change
                 dem_downsampled = dem
                 path_raster_downsampled = path_raster
                 new_transform = transform_list
@@ -2227,10 +2304,12 @@ class DEMTileCache:
             # Replace NaN and inf values with reasonable defaults
             cost_surface_clean = np.nan_to_num(cost_surface_downsampled, nan=1000.0, posinf=10000.0, neginf=0.0)
             slope_degrees_clean = np.nan_to_num(slope_degrees_downsampled, nan=0.0, posinf=90.0, neginf=0.0)
+            slope_change_clean = np.nan_to_num(slope_change_downsampled, nan=0.0, posinf=45.0, neginf=0.0) if slope_change_downsampled is not None else None
             
             return {
                 'cost_surface': cost_surface_clean.tolist(),
                 'slope_degrees': slope_degrees_clean.tolist(),
+                'slope_change': slope_change_clean.tolist() if slope_change_clean is not None else None,
                 'elevation': np.nan_to_num(dem_downsampled, nan=0.0).tolist() if dem_downsampled is not None else None,
                 'path_raster': path_raster_downsampled.tolist() if path_raster_downsampled is not None else None,
                 'path_types': path_types_list,
@@ -2535,11 +2614,11 @@ class DEMTileCache:
             # Fetch preferred paths
             print("Fetching preferred paths...")
             paths = self.fetch_paths(min_lat, max_lat, min_lon, max_lon)
-            path_raster, path_types, path_raw_tags = self.rasterize_paths(paths, out_trans, dem.shape, crs)
+            path_raster, path_types, path_raw_tags = self.rasterize_paths(paths, out_trans, dem.shape, crs, obstacle_mask, expand_paths=True)
             
             # Compute cost surface
             print("Computing cost surface...")
-            cost_surface, slope_degrees = self.compute_cost_surface(dem, out_trans, obstacle_mask, path_raster, path_types)
+            cost_surface, slope_degrees, slope_change = self.compute_cost_surface(dem, out_trans, obstacle_mask, path_raster, path_types)
             
             # Build indices
             print("Building indices...")

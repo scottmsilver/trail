@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import L from 'leaflet';
 import './PrepopulateArea.css';
 
@@ -37,7 +37,10 @@ const PrepopulateArea: React.FC<PrepopulateAreaProps> = ({ map, onClose }) => {
   const [result, setResult] = useState<PrepopulateResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [rectangle, setRectangle] = useState<L.Rectangle | null>(null);
-  const [markers, setMarkers] = useState<L.Marker[]>([]);
+  const [isMinimized, setIsMinimized] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStart, setDragStart] = useState<L.LatLng | null>(null);
+  const [tempRectangle, setTempRectangle] = useState<L.Rectangle | null>(null);
 
   // Calculate area in km²
   const calculateArea = (c1: Corner, c2: Corner): number => {
@@ -52,58 +55,94 @@ const PrepopulateArea: React.FC<PrepopulateAreaProps> = ({ map, onClose }) => {
       if (rectangle && map) {
         map.removeLayer(rectangle);
       }
-      markers.forEach(marker => {
-        if (map) map.removeLayer(marker);
-      });
+      if (tempRectangle && map) {
+        map.removeLayer(tempRectangle);
+      }
     };
   }, []);
 
-  // Handle map clicks
+  // Handle map interactions for click-and-drag
   useEffect(() => {
     if (!map || !isSelecting) return;
 
-    const handleMapClick = (e: L.LeafletMouseEvent) => {
-      const { lat, lng } = e.latlng;
+    const handleMouseDown = (e: L.LeafletMouseEvent) => {
+      setIsDragging(true);
+      setDragStart(e.latlng);
+      setCorner1({ lat: e.latlng.lat, lon: e.latlng.lng });
       
-      if (!corner1) {
-        setCorner1({ lat, lon: lng });
-        
-        // Add marker
-        const marker = L.marker([lat, lng])
-          .addTo(map)
-          .bindPopup('Corner 1');
-        setMarkers([marker]);
-      } else if (!corner2) {
-        setCorner2({ lat, lon: lng });
-        setIsSelecting(false);
-        
-        // Add second marker
-        const marker = L.marker([lat, lng])
-          .addTo(map)
-          .bindPopup('Corner 2');
-        setMarkers(prev => [...prev, marker]);
-        
-        // Draw rectangle
-        const bounds = L.latLngBounds(
-          [corner1.lat, corner1.lon],
-          [lat, lng]
-        );
-        const rect = L.rectangle(bounds, {
-          color: '#3B82F6',
-          weight: 2,
-          opacity: 0.8,
-          fillOpacity: 0.2,
-        }).addTo(map);
-        setRectangle(rect);
+      // Clear any existing rectangles
+      if (tempRectangle) {
+        map.removeLayer(tempRectangle);
+        setTempRectangle(null);
+      }
+      if (rectangle) {
+        map.removeLayer(rectangle);
+        setRectangle(null);
       }
     };
 
-    map.on('click', handleMapClick);
+    const handleMouseMove = (e: L.LeafletMouseEvent) => {
+      if (!isDragging || !dragStart) return;
+
+      // Update temporary rectangle
+      if (tempRectangle) {
+        map.removeLayer(tempRectangle);
+      }
+
+      const bounds = L.latLngBounds(dragStart, e.latlng);
+      const rect = L.rectangle(bounds, {
+        color: '#3B82F6',
+        weight: 2,
+        opacity: 0.5,
+        fillOpacity: 0.1,
+        dashArray: '5, 5'
+      }).addTo(map);
+      
+      setTempRectangle(rect);
+    };
+
+    const handleMouseUp = (e: L.LeafletMouseEvent) => {
+      if (!isDragging || !dragStart) return;
+
+      setIsDragging(false);
+      setCorner2({ lat: e.latlng.lat, lon: e.latlng.lng });
+      setIsSelecting(false);
+
+      // Remove temporary rectangle
+      if (tempRectangle) {
+        map.removeLayer(tempRectangle);
+        setTempRectangle(null);
+      }
+
+      // Draw final rectangle
+      const bounds = L.latLngBounds(dragStart, e.latlng);
+      const rect = L.rectangle(bounds, {
+        color: '#3B82F6',
+        weight: 2,
+        opacity: 0.8,
+        fillOpacity: 0.2,
+      }).addTo(map);
+      setRectangle(rect);
+
+      // Minimize the dialog after selection
+      setIsMinimized(true);
+    };
+
+    // Add event listeners
+    map.on('mousedown', handleMouseDown);
+    map.on('mousemove', handleMouseMove);
+    map.on('mouseup', handleMouseUp);
+
+    // Change cursor when selecting
+    map.getContainer().style.cursor = 'crosshair';
 
     return () => {
-      map.off('click', handleMapClick);
+      map.off('mousedown', handleMouseDown);
+      map.off('mousemove', handleMouseMove);
+      map.off('mouseup', handleMouseUp);
+      map.getContainer().style.cursor = '';
     };
-  }, [map, isSelecting, corner1, corner2]);
+  }, [map, isSelecting, isDragging, dragStart, tempRectangle, rectangle]);
 
   const startSelection = () => {
     // Clear previous selection
@@ -111,16 +150,17 @@ const PrepopulateArea: React.FC<PrepopulateAreaProps> = ({ map, onClose }) => {
       map.removeLayer(rectangle);
       setRectangle(null);
     }
-    markers.forEach(marker => {
-      if (map) map.removeLayer(marker);
-    });
-    setMarkers([]);
+    if (tempRectangle && map) {
+      map.removeLayer(tempRectangle);
+      setTempRectangle(null);
+    }
     
     setCorner1(null);
     setCorner2(null);
     setResult(null);
     setError(null);
     setIsSelecting(true);
+    setIsMinimized(false);
   };
 
   const cancelSelection = () => {
@@ -129,10 +169,10 @@ const PrepopulateArea: React.FC<PrepopulateAreaProps> = ({ map, onClose }) => {
       map.removeLayer(rectangle);
       setRectangle(null);
     }
-    markers.forEach(marker => {
-      if (map) map.removeLayer(marker);
-    });
-    setMarkers([]);
+    if (tempRectangle && map) {
+      map.removeLayer(tempRectangle);
+      setTempRectangle(null);
+    }
     setCorner1(null);
     setCorner2(null);
   };
@@ -177,20 +217,52 @@ const PrepopulateArea: React.FC<PrepopulateAreaProps> = ({ map, onClose }) => {
     }
   };
 
+  // Minimized view
+  if (isMinimized) {
+    return (
+      <div className="prepopulate-area-minimized">
+        <button 
+          className="minimize-button"
+          onClick={() => setIsMinimized(false)}
+          title="Expand prepopulate panel"
+        >
+          <span className="icon">📦</span>
+          <span>Prepopulate Area</span>
+          {corner1 && corner2 && !result && <span className="badge">Ready</span>}
+          {result && <span className="badge success">✓</span>}
+        </button>
+        {onClose && (
+          <button className="close-btn-mini" onClick={onClose}>
+            ×
+          </button>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="prepopulate-area-card">
       <div className="card-header">
         <div className="header-content">
           <h3 className="card-title">Prepopulate Area</h3>
           <p className="card-description">
-            Click two corners on the map to define an area for prepopulation
+            Click and drag on the map to select an area
           </p>
         </div>
-        {onClose && (
-          <button className="close-btn" onClick={onClose}>
-            ×
+        <div className="header-actions">
+          <button 
+            className="minimize-btn" 
+            onClick={() => setIsMinimized(true)}
+            title="Minimize"
+          >
+            −
           </button>
-        )}
+          {onClose && (
+            <button className="close-btn" onClick={onClose}>
+              ×
+            </button>
+          )}
+        </div>
       </div>
       
       <div className="card-content">
@@ -198,7 +270,7 @@ const PrepopulateArea: React.FC<PrepopulateAreaProps> = ({ map, onClose }) => {
         {!isSelecting && !corner1 && !result && (
           <div className="alert alert-info">
             <span className="icon">📍</span>
-            <p>Click "Select Area" then click two points on the map to define the corners of the area you want to prepopulate.</p>
+            <p>Click "Select Area" then click and drag on the map to draw a rectangle around the area you want to prepopulate.</p>
           </div>
         )}
 
@@ -206,11 +278,7 @@ const PrepopulateArea: React.FC<PrepopulateAreaProps> = ({ map, onClose }) => {
         {isSelecting && (
           <div className="alert alert-primary">
             <span className="icon">⬚</span>
-            <p>
-              {!corner1 
-                ? "Click on the map to set the first corner"
-                : "Click on the map to set the second corner"}
-            </p>
+            <p>Click and drag on the map to select area</p>
           </div>
         )}
 
@@ -219,10 +287,6 @@ const PrepopulateArea: React.FC<PrepopulateAreaProps> = ({ map, onClose }) => {
           <div className="area-info">
             <h4>Selected Area</h4>
             <div className="info-grid">
-              <span>Corner 1:</span>
-              <span>{corner1.lat.toFixed(4)}, {corner1.lon.toFixed(4)}</span>
-              <span>Corner 2:</span>
-              <span>{corner2.lat.toFixed(4)}, {corner2.lon.toFixed(4)}</span>
               <span>Area:</span>
               <span>~{calculateArea(corner1, corner2).toFixed(1)} km²</span>
             </div>

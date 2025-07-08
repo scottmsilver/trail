@@ -247,8 +247,13 @@ class TiledDEMCache:
         # Use a high but finite cost for uninitialized areas (obstacles have cost 1000)
         cost_surface = np.full((composite_height, composite_width), 1000.0, dtype=np.float32)
         slope_degrees = np.zeros((composite_height, composite_width), dtype=np.float32)
+        slope_change = np.zeros((composite_height, composite_width), dtype=np.float32)
         # Initialize DEM with NaN to indicate missing data (not zero!)
         dem = np.full((composite_height, composite_width), np.nan, dtype=np.float32)
+        # Initialize path_raster with zeros (0 = no path)
+        path_raster = np.zeros((composite_height, composite_width), dtype=np.int32)
+        # Collect all path types from tiles
+        all_path_types = {}
         
         # Fill in tile data
         outlier_tiles = 0
@@ -280,8 +285,15 @@ class TiledDEMCache:
             
             cost_surface[y_start:actual_y_end, x_start:actual_x_end] = tile_data['cost_surface'][:actual_y_end-y_start, :actual_x_end-x_start]
             slope_degrees[y_start:actual_y_end, x_start:actual_x_end] = tile_data['slope_degrees'][:actual_y_end-y_start, :actual_x_end-x_start]
+            if 'slope_change' in tile_data:
+                slope_change[y_start:actual_y_end, x_start:actual_x_end] = tile_data['slope_change'][:actual_y_end-y_start, :actual_x_end-x_start]
             if 'dem' in tile_data:
                 dem[y_start:actual_y_end, x_start:actual_x_end] = tile_data['dem'][:actual_y_end-y_start, :actual_x_end-x_start]  # Copy DEM data
+            if 'path_raster' in tile_data:
+                path_raster[y_start:actual_y_end, x_start:actual_x_end] = tile_data['path_raster'][:actual_y_end-y_start, :actual_x_end-x_start]
+            if 'path_types' in tile_data:
+                # Merge path types from this tile
+                all_path_types.update(tile_data['path_types'])
         
         if outlier_tiles > 0:
             logger.info(f"[TILE COMPOSE] Handled {outlier_tiles} outlier tiles")
@@ -328,7 +340,10 @@ class TiledDEMCache:
         return {
             'cost_surface': cost_surface,
             'slope_degrees': slope_degrees,
+            'slope_change': slope_change,
             'dem': dem,  # Include composed DEM data
+            'path_raster': path_raster,
+            'path_types': all_path_types,
             'transform': composite_transform,
             'crs': first_tile.get('crs'),
             'bounds': (min_tile_y * self.tile_size, (max_tile_y + 1) * self.tile_size,
