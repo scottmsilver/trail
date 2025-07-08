@@ -78,24 +78,37 @@ class TestSlopeLayer(unittest.TestCase):
         mock_dem = MagicMock()
         mock_dem.rio.crs = "EPSG:4326"
         mock_dem.to_numpy.return_value = elevation
-        mock_dem.x.min.return_value = bounds.west - 0.05
-        mock_dem.x.max.return_value = bounds.east + 0.05
-        mock_dem.y.min.return_value = bounds.south - 0.05
-        mock_dem.y.max.return_value = bounds.north + 0.05
+        mock_dem.x.min.return_value = -111.02
+        mock_dem.x.max.return_value = -110.98
+        mock_dem.y.min.return_value = 39.98
+        mock_dem.y.max.return_value = 40.02
         mock_get_dem.return_value = mock_dem
         
         # First load elevation data - need to load the aligned area
         # The slope layer will expand bounds to tile boundaries
+        # Calculate what the slope layer will actually need
+        tile_size = 0.01
+        south_tile = int(np.floor(bounds.south / tile_size))
+        north_tile = int(np.floor(bounds.north / tile_size))
+        west_tile = int(np.floor(bounds.west / tile_size))
+        east_tile = int(np.floor(bounds.east / tile_size))
+        
         aligned_bounds = Bounds(
-            south=40.0,  # Already on tile boundary
-            north=40.01, # Will expand to 40.01
-            west=-111.01, # Already on tile boundary
-            east=-111.0   # Already on tile boundary
+            south=south_tile * tile_size,
+            north=(north_tile + 1) * tile_size,
+            west=west_tile * tile_size,
+            east=(east_tile + 1) * tile_size
         )
+        # Load with larger mock data to cover aligned bounds
+        mock_dem.to_numpy.return_value = np.random.rand(200, 200) * 100 + 2000
         self.elev_lib.load_area(aligned_bounds)
         
         # Now compute slopes
         result = self.slope_layer.compute_area(bounds)
+        
+        # Debug if failed
+        if result["status"] != "success":
+            print(f"Compute failed: {result}")
         
         self.assertEqual(result["status"], "success")
         self.assertGreater(result["tiles_created"], 0)
@@ -129,9 +142,10 @@ class TestSlopeLayer(unittest.TestCase):
         
         self.assertAlmostEqual(mean_slope, expected_slope, delta=0.5)
         
-        # Check aspect is approximately East (90 degrees)
+        # Check aspect is approximately West (270 degrees)
+        # Elevation increases to the east, so slope faces west
         mean_aspect = np.mean(slope_data.aspect[1:-1, 1:-1])
-        self.assertAlmostEqual(mean_aspect, 90, delta=5)
+        self.assertAlmostEqual(mean_aspect, 270, delta=5)
     
     def test_get_slope_not_computed(self):
         """Test getting slope when not computed"""
@@ -152,15 +166,30 @@ class TestSlopeLayer(unittest.TestCase):
         mock_dem = MagicMock()
         mock_dem.rio.crs = "EPSG:4326"
         mock_dem.to_numpy.return_value = elevation
-        mock_dem.x.min.return_value = bounds.west - 0.05
-        mock_dem.x.max.return_value = bounds.east + 0.05
-        mock_dem.y.min.return_value = bounds.south - 0.05
-        mock_dem.y.max.return_value = bounds.north + 0.05
+        mock_dem.x.min.return_value = -111.02
+        mock_dem.x.max.return_value = -110.98
+        mock_dem.y.min.return_value = 39.98
+        mock_dem.y.max.return_value = 40.02
         mock_get_dem.return_value = mock_dem
         
-        # Load elevation and compute slopes
-        self.elev_lib.load_area(bounds)
-        self.slope_layer.compute_area(bounds)
+        # Load elevation for aligned bounds
+        tile_size = 0.01
+        south_tile = int(np.floor(bounds.south / tile_size))
+        north_tile = int(np.floor(bounds.north / tile_size))
+        west_tile = int(np.floor(bounds.west / tile_size))
+        east_tile = int(np.floor(bounds.east / tile_size))
+        
+        aligned_bounds = Bounds(
+            south=south_tile * tile_size,
+            north=(north_tile + 1) * tile_size,
+            west=west_tile * tile_size,
+            east=(east_tile + 1) * tile_size
+        )
+        self.elev_lib.load_area(aligned_bounds)
+        
+        # Compute slopes
+        result = self.slope_layer.compute_area(bounds)
+        self.assertEqual(result["status"], "success")
         
         # Now should be able to get slope
         slope = self.slope_layer.get_slope(40.005, -111.005)
@@ -276,9 +305,10 @@ class TestSlopeCalculations(unittest.TestCase):
         mean_curvature = np.mean(slope_data.slope_change[5:-5, 5:-5])
         self.assertLess(mean_curvature, 0.1)
         
-        # Aspect should be East (90 degrees)
+        # Aspect should be West (270 degrees)
+        # Elevation increases to the east, so slope faces west
         mean_aspect = np.mean(slope_data.aspect[5:-5, 5:-5])
-        self.assertAlmostEqual(mean_aspect, 90, delta=5)
+        self.assertAlmostEqual(mean_aspect, 270, delta=5)
     
     def test_ridge_terrain(self):
         """Test terrain with a ridge (positive curvature)"""

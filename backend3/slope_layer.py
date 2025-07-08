@@ -191,16 +191,20 @@ class SlopeLayer:
         slope_deg = np.degrees(slope_rad)
         
         # Compute aspect (direction of slope)
-        # Note: grad_y is positive going north (up in geographic coordinates)
-        # but array indices increase going south (down)
-        # So we need to negate grad_y
-        # atan2 takes (y, x) and returns angle from positive x-axis
-        aspect_rad = np.arctan2(-grad_x, grad_y)  # Note the order and sign
-        # Convert to compass bearing (0=North, 90=East, etc.)
-        # atan2 gives: 0=East, π/2=North, π=West, -π/2=South
-        # We want: 0=North, 90=East, 180=South, 270=West
-        aspect_deg = np.degrees(aspect_rad)
-        aspect_deg = (90 - aspect_deg) % 360
+        # grad_x is positive going east (elevation increases eastward)
+        # grad_y is positive going down (south) in array indices
+        # But we want grad_y positive going north for geographic coordinates
+        # So we negate grad_y
+        # 
+        # For aspect calculation:
+        # - We want the direction the slope is facing (downhill direction)
+        # - If grad_x > 0, elevation increases eastward, so downhill is west
+        # - If grad_y > 0 (after negation), elevation increases northward, so downhill is south
+        # - We need to negate both gradients to get downhill direction
+        # - atan2(-y, -x) gives angle of downhill direction
+        # - We want 0=North, 90=East, 180=South, 270=West
+        aspect_rad = np.arctan2(-grad_x, grad_y)  # Negative grad_x for downhill direction
+        aspect_deg = np.degrees(aspect_rad) % 360
         
         # Compute second derivatives for slope change
         # This gives us the curvature of the terrain
@@ -320,8 +324,8 @@ class SlopeLayer:
         pixels_per_deg_lon = width / geo_width
         
         # Create each tile
-        for lat_idx in range(south_tile, north_tile):
-            for lon_idx in range(west_tile, east_tile):
+        for lat_idx in range(south_tile, north_tile + 1):
+            for lon_idx in range(west_tile, east_tile + 1):
                 # Tile geographic bounds
                 tile_south = lat_idx * self.tile_size
                 tile_north = (lat_idx + 1) * self.tile_size
