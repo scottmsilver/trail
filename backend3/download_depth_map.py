@@ -29,6 +29,9 @@ Examples:
   # Using bounds (south,north,west,east):
   python download_depth_map.py --bounds 40.6448,40.6588,-111.5780,-111.5595 --resolution 3
   
+  # With margin (adds 0.01° buffer around bounds):
+  python download_depth_map.py --bounds 40.6448,40.6588,-111.5780,-111.5595 --resolution 10 --margin 0.01
+  
   # Custom output name:
   python download_depth_map.py --bounds 40.6448,40.6588,-111.5780,-111.5595 --resolution 3 --output my_area.png
         """
@@ -51,6 +54,8 @@ Examples:
     parser.add_argument('--output', type=str, help='Output filename (default: depth_map_<resolution>m.png)')
     parser.add_argument('--data-dir', type=str, default='./elevation_data',
                        help='Directory for elevation data (default: ./elevation_data)')
+    parser.add_argument('--margin', type=float, default=0.0,
+                       help='Margin in degrees to add around the specified bounds (default: 0.0)')
     
     args = parser.parse_args()
     
@@ -61,6 +66,12 @@ Examples:
             parser.error("Bounds must be: south,north,west,east")
         try:
             south, north, west, east = map(float, parts)
+            # Apply margin
+            if args.margin > 0:
+                south -= args.margin
+                north += args.margin
+                west -= args.margin
+                east += args.margin
             # Use corners as start/end points
             start_lat, start_lon = north, west
             end_lat, end_lon = south, east
@@ -73,6 +84,17 @@ Examples:
             parser.error("Must provide either --bounds or all of --lat1, --lon1, --lat2, --lon2")
         start_lat, start_lon = args.lat1, args.lon1
         end_lat, end_lon = args.lat2, args.lon2
+        
+        # Apply margin when using individual coordinates
+        if args.margin > 0:
+            # Calculate bounds from the two points
+            north = max(start_lat, end_lat) + args.margin
+            south = min(start_lat, end_lat) - args.margin
+            east = max(start_lon, end_lon) + args.margin
+            west = min(start_lon, end_lon) - args.margin
+            # Update start/end to use the expanded corners
+            start_lat, start_lon = north, west
+            end_lat, end_lon = south, east
     
     # Determine output filename
     if args.output:
@@ -84,6 +106,8 @@ Examples:
     print(f"Downloading elevation data and creating depth map...")
     print(f"Start: {start_lat:.4f}, {start_lon:.4f}")
     print(f"End: {end_lat:.4f}, {end_lon:.4f}")
+    if args.margin > 0:
+        print(f"Margin: {args.margin}° (bounds expanded by {args.margin}° in all directions)")
     print(f"Resolution: {args.resolution}m")
     print(f"Output: {output_file}")
     print(f"Data directory: {args.data_dir}")
