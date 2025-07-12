@@ -6,12 +6,16 @@ Command-line interface for elevation pathfinding with customizable parameters.
 import argparse
 import sys
 import os
-from datetime import datetime
+from datetime import datetime, timezone
+import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from elevation import TwoLayerElevationLibrary, Bounds
 from elevation_pathfinder_sustained import SustainedSlopePathfinder, visualize_path_with_fatigue
+from path_layer import PathLayer, PathType
+from elevation_pathfinder_terrain import TerrainAwarePathfinder
+from elevation_fd_safe import FDManagedElevationLibrary
 
 
 def create_gpx(lats, lons, elevations, route_name, description, filename):
@@ -24,7 +28,7 @@ def create_gpx(lats, lons, elevations, route_name, description, filename):
   <metadata>
     <name>{route_name}</name>
     <desc>{description}</desc>
-    <time>{datetime.utcnow().isoformat()}Z</time>
+    <time>{datetime.now(timezone.utc).isoformat()}Z</time>
   </metadata>
   <trk>
     <name>{route_name}</name>
@@ -65,6 +69,10 @@ Examples:
   python pathfinder_cli.py --start 40.6599,-111.5662 --goal 40.6483,-111.5648 \\
     --elevation-weight 2.0 --distance-weight 0.01 --sustained-weight 2.0 \\
     --fatigue-distance 50 --steep-threshold 12
+
+  # Terrain-aware pathfinding (prefers trails, uses OSM data):
+  python pathfinder_cli.py --start 40.6599,-111.5662 --goal 40.6483,-111.5648 \\
+    --use-terrain --prefer-trails 0.1 --avoid-roads
         """
     )
     
@@ -94,6 +102,16 @@ Examples:
     parser.add_argument('--fatigue-exponent', type=float, default=2.0,
                        help='How quickly fatigue accumulates (default: 2.0)')
     
+    # Terrain awareness parameters
+    parser.add_argument('--use-terrain', action='store_true',
+                       help='Enable terrain-aware pathfinding (uses OSM path data)')
+    parser.add_argument('--prefer-trails', type=float, default=0.3,
+                       help='Cost multiplier for trails when terrain-aware (lower=preferred, default: 0.3)')
+    parser.add_argument('--avoid-roads', action='store_true',
+                       help='Increase cost for roads/streets when terrain-aware')
+    parser.add_argument('--terrain-weight', type=float, default=1.0,
+                       help='Weight for terrain preferences (default: 1.0)')
+    
     # Other parameters
     parser.add_argument('--max-slope', type=float, default=45.0,
                        help='Maximum traversable slope in degrees (default: 45.0)')
@@ -104,11 +122,21 @@ Examples:
     parser.add_argument('--data-dir', type=str, default='./elevation_data',
                        help='Directory for elevation data')
     parser.add_argument('--output', type=str, default='pathfinder_result.png',
-                       help='Output filename')
+                       help='Output filename for visualization')
     parser.add_argument('--gpx', type=str, default=None,
                        help='Output GPX filename (if not specified, auto-generated from parameters)')
+    parser.add_argument('--skip-viz', action='store_true',
+                       help='Skip visualization (only generate GPX and coordinate files)')
+    parser.add_argument('--skip-gpx', action='store_true',
+                       help='Skip GPX file generation')
+    parser.add_argument('--viz-only', action='store_true',
+                       help='Only generate visualization (skip GPX and coordinate files)')
     
     args = parser.parse_args()
+    
+    # Validate conflicting flags
+    if args.skip_viz and args.viz_only:
+        parser.error("Cannot use --skip-viz and --viz-only together")
     
     # Parse coordinates
     try:
@@ -129,18 +157,32 @@ Examples:
     print(f"Search area: {bounds.south:.4f} to {bounds.north:.4f} lat, "
           f"{bounds.west:.4f} to {bounds.east:.4f} lon")
     
-    elev_lib = TwoLayerElevationLibrary(args.data_dir, args.resolution)
-    result = elev_lib.load_area(bounds)
+    # Use FD-safe wrapper for large margins to avoid file descriptor limits
+    base_elev_lib = TwoLayerElevationLibrary(args.data_dir, args.resolution)
+    
+    # Check if we need FD management (large search areas)
+    area_size = (bounds.north - bounds.south) * (bounds.east - bounds.west)
+    use_fd_safe = area_size > 0.01  # More than 0.01 square degrees
+    
+    if use_fd_safe:
+        print(f"Using FD-safe elevation library for large area ({area_size:.4f} sq degrees)")
+        elev_lib = FDManagedElevationLibrary(base_elev_lib, max_open_files=20)  # Reduced from 30
+    else:
+        elev_lib = base_elev_lib
+    
+    result = elev_lib.load_area(bounds) if hasattr(elev_lib, 'load_area') else base_elev_lib.load_area(bounds)
     
     if result['status'] != 'success':
         print(f"Failed to load elevation data: {result.get('message', 'Unknown error')}")
         return 1
     
     # Get elevation array
-    elev_array, metadata = elev_lib.get_elevation_array(bounds)
+    if use_fd_safe:
+        elev_array, metadata = elev_lib.get_elevation_array_safe(bounds)
+    else:
+        elev_array, metadata = elev_lib.get_elevation_array(bounds)
     
     # Calculate pixel size
-    import numpy as np
     lat_center = (bounds.north + bounds.south) / 2
     lon_deg_to_m = 111000 * np.cos(np.radians(lat_center))
     pixel_size = abs(metadata['transform']['a']) * lon_deg_to_m
@@ -167,28 +209,152 @@ Examples:
         print(f"  Sustained slope weight: {args.sustained_weight}")
         print(f"  Steep threshold: {args.steep_threshold}°")
         print(f"  Fatigue distance: {args.fatigue_distance}m")
+    if args.use_terrain:
+        print(f"  Terrain-aware: YES")
+        print(f"  Trail preference: {args.prefer_trails}")
+        print(f"  Avoid roads: {args.avoid_roads}")
+        print(f"  Terrain weight: {args.terrain_weight}")
     print(f"  Max slope: {args.max_slope}°")
     
-    # Create pathfinder
-    pathfinder = SustainedSlopePathfinder(
-        elev_array, pixel_size,
-        elevation_weight=args.elevation_weight,
-        elevation_exponent=args.elevation_exponent,
-        distance_weight=args.distance_weight,
-        sustained_slope_weight=args.sustained_weight,
-        steep_threshold_degrees=args.steep_threshold,
-        rest_threshold_degrees=args.rest_threshold,
-        fatigue_distance=args.fatigue_distance,
-        fatigue_exponent=args.fatigue_exponent,
-        max_slope_degrees=args.max_slope
-    )
+    # Create pathfinder based on terrain awareness
+    if args.use_terrain:
+        # Initialize path layer
+        path_layer = PathLayer()
+        
+        # Check if we need to create path layer tile
+        tile_x = int(bounds.west * 100)
+        tile_y = int(bounds.south * 100)
+        if path_layer.load_tile(tile_x, tile_y) is None:
+            print("\nCreating path layer tile...")
+            path_layer.create_tile(tile_x, tile_y, (bounds.west, bounds.south, bounds.east, bounds.north))
+        
+        # Create terrain-aware pathfinder
+        # Pass base library to terrain pathfinder as it needs the original interface
+        pathfinder = TerrainAwarePathfinder(base_elev_lib, path_layer, bounds, resolution=args.resolution)
+        
+        # Set parameters
+        pathfinder.elevation_weight = args.elevation_weight
+        pathfinder.elevation_exponent = args.elevation_exponent
+        pathfinder.terrain_weight = args.terrain_weight
+        pathfinder.terrain_costs[PathType.HIKING_PATH] = args.prefer_trails
+        pathfinder.max_slope_degrees = args.max_slope
+        
+        if args.avoid_roads:
+            pathfinder.terrain_costs[PathType.STREET] = 2.0
+        
+        # Set sustained slope parameters
+        pathfinder.sustained_slope_weight = args.sustained_weight
+        pathfinder.steep_threshold = args.steep_threshold
+        pathfinder.fatigue_distance = args.fatigue_distance
+        pathfinder.fatigue_exponent = args.fatigue_exponent
+        
+        # Find path using lat/lon
+        print(f"\nSearching for terrain-aware path...")
+        path_coords = pathfinder.find_path(start_lat, start_lon, goal_lat, goal_lon)
+        
+        # Convert to pixel path for consistency with visualization
+        if path_coords:
+            path = []
+            for lat, lon, elev in path_coords:
+                row, col = latlon_to_pixel(lat, lon)
+                path.append((row, col))
+        else:
+            path = None
+            
+        # Clean up FD-managed elevation library if used
+        if use_fd_safe:
+            elev_lib.close_all()
+            
+    else:
+        # Use original pathfinder
+        pathfinder = SustainedSlopePathfinder(
+            elev_array, pixel_size,
+            elevation_weight=args.elevation_weight,
+            elevation_exponent=args.elevation_exponent,
+            distance_weight=args.distance_weight,
+            sustained_slope_weight=args.sustained_weight,
+            steep_threshold_degrees=args.steep_threshold,
+            rest_threshold_degrees=args.rest_threshold,
+            fatigue_distance=args.fatigue_distance,
+            fatigue_exponent=args.fatigue_exponent,
+            max_slope_degrees=args.max_slope
+        )
+        
+        # Find path
+        print(f"\nSearching for path...")
+        path = pathfinder.find_path(start_row, start_col, goal_row, goal_col)
     
-    # Find path
-    print(f"\nSearching for path...")
-    path = pathfinder.find_path(start_row, start_col, goal_row, goal_col)
+    # Clean up FD-managed elevation library if used
+    if use_fd_safe:
+        elev_lib.close_all()
     
     if path:
-        stats = pathfinder.calculate_path_stats_with_fatigue(path)
+        # Calculate stats based on pathfinder type
+        if args.use_terrain:
+            # For terrain-aware pathfinder, calculate stats manually
+            stats = {
+                'total_distance': 0,
+                'straight_distance': pixel_size * np.sqrt((goal_row - start_row)**2 + (goal_col - start_col)**2),
+                'total_ascent': 0,
+                'total_descent': 0,
+                'max_slope': 0,
+                'avg_slope': 0,
+                'steep_segments': [],
+                'num_steep_segments': 0,
+                'longest_steep_segment': 0,
+                'total_steep_distance': 0
+            }
+            
+            slopes = []
+            steep_distance = 0
+            
+            for i in range(1, len(path)):
+                # Distance
+                dr = path[i][0] - path[i-1][0]
+                dc = path[i][1] - path[i-1][1]
+                segment_dist = pixel_size * np.sqrt(dr**2 + dc**2)
+                stats['total_distance'] += segment_dist
+                
+                # Elevation change
+                elev1 = elev_array[path[i-1][0], path[i-1][1]]
+                elev2 = elev_array[path[i][0], path[i][1]]
+                elev_change = elev2 - elev1
+                
+                if elev_change > 0:
+                    stats['total_ascent'] += elev_change
+                else:
+                    stats['total_descent'] += abs(elev_change)
+                
+                # Slope
+                if segment_dist > 0:
+                    slope_rad = np.arctan(abs(elev_change) / segment_dist)
+                    slope_deg = np.degrees(slope_rad)
+                    slopes.append(slope_deg)
+                    stats['max_slope'] = max(stats['max_slope'], slope_deg)
+                    
+                    # Track steep segments
+                    if slope_deg > args.steep_threshold:
+                        steep_distance += segment_dist
+                    elif steep_distance > 0:
+                        stats['steep_segments'].append(steep_distance)
+                        steep_distance = 0
+            
+            # Finish last steep segment
+            if steep_distance > 0:
+                stats['steep_segments'].append(steep_distance)
+            
+            # Calculate derived stats
+            if slopes:
+                stats['avg_slope'] = np.mean(slopes)
+            stats['distance_ratio'] = stats['total_distance'] / stats['straight_distance'] if stats['straight_distance'] > 0 else 1
+            
+            if stats['steep_segments']:
+                stats['num_steep_segments'] = len(stats['steep_segments'])
+                stats['longest_steep_segment'] = max(stats['steep_segments'])
+                stats['total_steep_distance'] = sum(stats['steep_segments'])
+        else:
+            # Use original stats calculation
+            stats = pathfinder.calculate_path_stats_with_fatigue(path)
         
         print(f"\nPath found!")
         print(f"  Total distance: {stats['total_distance']:.1f}m")
@@ -205,56 +371,84 @@ Examples:
             print(f"  Longest segment: {stats['longest_steep_segment']:.1f}m")
             print(f"  Total steep distance: {stats['total_steep_distance']:.1f}m ({100*stats['total_steep_distance']/stats['total_distance']:.1f}%)")
         
-        # Visualize
-        output = visualize_path_with_fatigue(elev_array, path, bounds, stats, 
-                                           pathfinder, args.output)
-        print(f"\nVisualization saved to: {output}")
-        
-        # Also save a simple path file for further analysis
-        import matplotlib.pyplot as plt
+        # Prepare path data
         path_array = np.array(path)
         rows = path_array[:, 0]
         cols = path_array[:, 1]
         lons = bounds.west + (cols / elev_array.shape[1]) * (bounds.east - bounds.west)
         lats = bounds.north - (rows / elev_array.shape[0]) * (bounds.north - bounds.south)
-        
-        # Save coordinates
-        coord_file = args.output.replace('.png', '_coords.txt')
-        with open(coord_file, 'w') as f:
-            f.write("# Latitude,Longitude,Elevation\n")
-            for i, (lat, lon) in enumerate(zip(lats, lons)):
-                elev = elev_array[rows[i], cols[i]]
-                f.write(f"{lat:.6f},{lon:.6f},{elev:.1f}\n")
-        print(f"Path coordinates saved to: {coord_file}")
-        
-        # Create GPX file
         elevations = [elev_array[rows[i], cols[i]] for i in range(len(path))]
         
-        # Generate GPX filename if not specified
-        if args.gpx:
-            gpx_filename = args.gpx
+        # Visualize
+        if not args.skip_viz and not args.viz_only:
+            print(f"\nGenerating visualization...")
+        if args.skip_viz:
+            print(f"\nSkipping visualization (requested).")
+        elif args.use_terrain:
+            # For terrain-aware, use simple visualization
+            import matplotlib
+            matplotlib.use('Agg')  # Use non-interactive backend to save resources
+            import matplotlib.pyplot as plt
+            fig, ax = plt.subplots(1, 1, figsize=(12, 10))
+            
+            # Show elevation
+            im = ax.imshow(elev_array, cmap='terrain', origin='upper')
+            
+            # Plot path
+            ax.plot(path_array[:, 1], path_array[:, 0], 'r-', linewidth=2, label='Path')
+            ax.plot(path_array[0, 1], path_array[0, 0], 'go', markersize=10, label='Start')
+            ax.plot(path_array[-1, 1], path_array[-1, 0], 'ro', markersize=10, label='End')
+            
+            ax.set_title(f'Terrain-Aware Path (Distance: {stats["total_distance"]:.0f}m, Ratio: {stats["distance_ratio"]:.2f}x)')
+            ax.legend()
+            plt.colorbar(im, ax=ax, label='Elevation (m)')
+            
+            plt.tight_layout()
+            plt.savefig(args.output)
+            plt.close()
+            print(f"\nVisualization saved to: {args.output}")
         else:
-            # Create descriptive filename from parameters
-            gpx_filename = f"route_elev{args.elevation_weight}_exp{args.elevation_exponent}_dist{args.distance_weight}"
+            output = visualize_path_with_fatigue(elev_array, path, bounds, stats, 
+                                               pathfinder, args.output)
+            print(f"\nVisualization saved to: {output}")
+        
+        # Save coordinates file (unless viz-only mode)
+        if not args.viz_only:
+            coord_file = args.output.replace('.png', '_coords.txt')
+            with open(coord_file, 'w') as f:
+                f.write("# Latitude,Longitude,Elevation\n")
+                for i, (lat, lon) in enumerate(zip(lats, lons)):
+                    elev = elev_array[rows[i], cols[i]]
+                    f.write(f"{lat:.6f},{lon:.6f},{elev:.1f}\n")
+            print(f"Path coordinates saved to: {coord_file}")
+        
+        # Create GPX file (unless skip-gpx or viz-only mode)
+        if not args.skip_gpx and not args.viz_only:
+            # Generate GPX filename if not specified
+            if args.gpx:
+                gpx_filename = args.gpx
+            else:
+                # Create descriptive filename from parameters
+                gpx_filename = f"route_elev{args.elevation_weight}_exp{args.elevation_exponent}_dist{args.distance_weight}"
+                if args.sustained_weight > 0:
+                    gpx_filename += f"_fatigue{args.sustained_weight}"
+                gpx_filename += f"_{stats['distance_ratio']:.1f}x"
+                gpx_filename = gpx_filename.replace('.', '_').replace('__', '_') + '.gpx'
+            
+            # Create route name and description
+            route_name = f"Pathfinder Route {stats['distance_ratio']:.1f}x"
+            description = (f"Distance: {stats['total_distance']:.0f}m, "
+                          f"Ascent: {stats['total_ascent']:.0f}m, "
+                          f"Avg slope: {stats.get('avg_slope', 0):.1f}°, "
+                          f"Parameters: elev_weight={args.elevation_weight}, "
+                          f"elev_exp={args.elevation_exponent}, "
+                          f"dist_weight={args.distance_weight}")
+            
             if args.sustained_weight > 0:
-                gpx_filename += f"_fatigue{args.sustained_weight}"
-            gpx_filename += f"_{stats['distance_ratio']:.1f}x"
-            gpx_filename = gpx_filename.replace('.', '_').replace('__', '_') + '.gpx'
-        
-        # Create route name and description
-        route_name = f"Pathfinder Route {stats['distance_ratio']:.1f}x"
-        description = (f"Distance: {stats['total_distance']:.0f}m, "
-                      f"Ascent: {stats['total_ascent']:.0f}m, "
-                      f"Avg slope: {stats.get('avg_slope', 0):.1f}°, "
-                      f"Parameters: elev_weight={args.elevation_weight}, "
-                      f"elev_exp={args.elevation_exponent}, "
-                      f"dist_weight={args.distance_weight}")
-        
-        if args.sustained_weight > 0:
-            description += f", sustained_weight={args.sustained_weight}"
-        
-        gpx_file = create_gpx(lats, lons, elevations, route_name, description, gpx_filename)
-        print(f"GPX file saved to: {gpx_file}")
+                description += f", sustained_weight={args.sustained_weight}"
+            
+            gpx_file = create_gpx(lats, lons, elevations, route_name, description, gpx_filename)
+            print(f"GPX file saved to: {gpx_file}")
         
     else:
         print("\nNo path found!")
