@@ -83,16 +83,19 @@ Examples:
                        help='Goal coordinates as lat,lon')
     
     # Penalty weights
-    parser.add_argument('--elevation-weight', type=float, default=1.0,
-                       help='Weight for elevation change penalty (default: 1.0, try 2-5 for strong avoidance)')
+    parser.add_argument('--climb-penalty', '--elevation-weight', 
+                       dest='elevation_weight', type=float, default=1.0,
+                       help='Penalty for elevation gain (default: 1.0, higher=avoid climbing more, try 2-5 for strong avoidance)')
     parser.add_argument('--elevation-exponent', type=float, default=2.0,
                        help='Exponent for elevation penalty (default: 2.0, try 2.5-3.0 for stronger penalty on big changes)')
-    parser.add_argument('--distance-weight', type=float, default=0.1,
-                       help='Weight for path deviation penalty (default: 0.1, try 0.001-0.01 to allow long detours)')
+    parser.add_argument('--distance-penalty', '--distance-weight',
+                       dest='distance_weight', type=float, default=0.1,
+                       help='Penalty for longer paths (default: 0.1, lower=allow scenic detours, try 0.001-0.01 for long detours)')
     
     # Sustained slope parameters
-    parser.add_argument('--sustained-weight', type=float, default=0.0,
-                       help='Weight for sustained slope penalty (default: 0.0, try 1-3 to break up long climbs)')
+    parser.add_argument('--fatigue-penalty-multiplier', '--sustained-weight',
+                       dest='sustained_weight', type=float, default=0.0,
+                       help='Penalty multiplier for sustained steep climbing (default: 0.0=disabled, try 1-3 to break up long climbs)')
     parser.add_argument('--steep-threshold', type=float, default=15.0,
                        help='Slope threshold in degrees for fatigue (default: 15.0)')
     parser.add_argument('--rest-threshold', type=float, default=8.0,
@@ -105,12 +108,14 @@ Examples:
     # Terrain awareness parameters
     parser.add_argument('--use-terrain', action='store_true',
                        help='Enable terrain-aware pathfinding (uses OSM path data)')
-    parser.add_argument('--prefer-trails', type=float, default=0.3,
-                       help='Cost multiplier for trails when terrain-aware (lower=preferred, default: 0.3)')
+    parser.add_argument('--trail-cost-factor', '--prefer-trails',
+                       dest='prefer_trails', type=float, default=0.3,
+                       help='Cost multiplier for trails (default: 0.3=trails cost 30% of normal, 0.1=strong preference, 2.0=avoid trails)')
     parser.add_argument('--avoid-roads', action='store_true',
                        help='Increase cost for roads/streets when terrain-aware')
-    parser.add_argument('--terrain-weight', type=float, default=1.0,
-                       help='Weight for terrain preferences (default: 1.0)')
+    parser.add_argument('--terrain-cost-scale', '--terrain-weight',
+                       dest='terrain_weight', type=float, default=1.0,
+                       help='Scales all terrain type penalties (default: 1.0, lower=terrain matters less)')
     
     # Other parameters
     parser.add_argument('--max-slope', type=float, default=45.0,
@@ -137,6 +142,53 @@ Examples:
     # Validate conflicting flags
     if args.skip_viz and args.viz_only:
         parser.error("Cannot use --skip-viz and --viz-only together")
+    
+    # Check if old parameter names were used and suggest new ones
+    old_to_new_params = {
+        '--prefer-trails': '--trail-cost-factor',
+        '--elevation-weight': '--climb-penalty',
+        '--distance-weight': '--distance-penalty',
+        '--sustained-weight': '--fatigue-penalty-multiplier',
+        '--terrain-weight': '--terrain-cost-scale'
+    }
+    
+    # Build suggested command with new parameter names
+    import sys
+    original_args = sys.argv[1:]
+    suggested_args = []
+    old_params_used = []
+    
+    i = 0
+    while i < len(original_args):
+        arg = original_args[i]
+        if arg in old_to_new_params:
+            old_params_used.append(arg)
+            suggested_args.append(old_to_new_params[arg])
+        else:
+            suggested_args.append(arg)
+        i += 1
+    
+    # Print suggestion if old parameters were used
+    if old_params_used:
+        print("\nNOTE: You're using deprecated parameter names. Consider using:")
+        print(f"python {sys.argv[0]} {' '.join(suggested_args)}\n")
+    
+    # Validate parameter values
+    if args.prefer_trails > 2.0:
+        print(f"WARNING: trail-cost-factor={args.prefer_trails} is very high. "
+              f"This will strongly avoid trails. Use 0.1-0.5 to prefer trails.")
+    
+    if args.distance_weight < 0:
+        parser.error("distance-penalty cannot be negative")
+    
+    if args.elevation_weight < 0:
+        parser.error("climb-penalty cannot be negative")
+    
+    if args.sustained_weight < 0:
+        parser.error("fatigue-penalty-multiplier cannot be negative")
+    
+    if args.terrain_weight < 0:
+        parser.error("terrain-cost-scale cannot be negative")
     
     # Parse coordinates
     try:

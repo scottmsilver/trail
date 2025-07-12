@@ -48,6 +48,35 @@ This plan addresses the inconsistent naming of pathfinding parameters, particula
 --fatigue-exponent -> --fatigue-acceleration (optional improvement)
 ```
 
+## Phase 1.5: Test-Driven Development
+
+### Create Comprehensive Tests BEFORE Changes
+```python
+# tests/test_parameter_compatibility.py
+class TestParameterCompatibility:
+    def test_old_parameter_names_still_work(self):
+        """Ensure --prefer-trails still functions"""
+        result = run_pathfinder(["--prefer-trails", "0.5"])
+        assert result.trail_cost_factor == 0.5
+    
+    def test_new_parameter_names_work(self):
+        """Ensure --trail-cost-factor functions"""
+        result = run_pathfinder(["--trail-cost-factor", "0.5"])
+        assert result.trail_cost_factor == 0.5
+    
+    def test_parameter_effects_unchanged(self):
+        """Verify renaming doesn't change behavior"""
+        old_path = run_pathfinder(["--prefer-trails", "0.3"])
+        new_path = run_pathfinder(["--trail-cost-factor", "0.3"])
+        assert old_path == new_path
+    
+    def test_warning_for_confusing_values(self):
+        """Test warnings for likely misunderstood parameters"""
+        with captured_logs() as logs:
+            run_pathfinder(["--trail-cost-factor", "5.0"])
+        assert "strongly avoid trails" in logs
+```
+
 ## Phase 2: Code Implementation Steps
 
 ### 2.1 Update Argument Parser (pathfinder_cli.py)
