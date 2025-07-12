@@ -161,7 +161,17 @@ Examples:
     i = 0
     while i < len(original_args):
         arg = original_args[i]
-        if arg in old_to_new_params:
+        
+        # Handle args with = sign (e.g., --prefer-trails=0.25)
+        if '=' in arg:
+            param_name, param_value = arg.split('=', 1)
+            if param_name in old_to_new_params:
+                old_params_used.append(param_name)
+                suggested_args.append(f"{old_to_new_params[param_name]}={param_value}")
+            else:
+                suggested_args.append(arg)
+        # Handle regular args
+        elif arg in old_to_new_params:
             old_params_used.append(arg)
             suggested_args.append(old_to_new_params[arg])
         else:

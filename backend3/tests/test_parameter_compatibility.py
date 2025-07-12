@@ -179,6 +179,14 @@ class TestParameterNaming:
         result = self.run_pathfinder(base_command + ["--climb-penalty", "-1.0"])
         assert result.returncode != 0
         assert "cannot be negative" in result.stderr
+    
+    def test_equals_syntax_parameter_suggestion(self, base_command):
+        """Test that parameters with = syntax are handled correctly."""
+        result = self.run_pathfinder(base_command + ["--prefer-trails=0.25", "--terrain-weight=0.8"])
+        assert result.returncode == 0
+        # Check the suggestion includes the corrected parameter names
+        assert "--trail-cost-factor=0.25" in result.stdout
+        assert "--terrain-cost-scale=0.8" in result.stdout
 
 
 class TestParameterEffects:
