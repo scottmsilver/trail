@@ -12,6 +12,7 @@ from app.engine_v2.elevation import Bounds, TwoLayerElevationLibrary
 from app.engine_v2.elevation_fd_safe import FDManagedElevationLibrary
 from app.engine_v2.path_layer import PathLayer, PathType
 from app.engine_v2.pathfinder import TerrainAwarePathfinder
+from app.engine_v2.service import TrailFinderServiceV2
 
 __all__ = [
     "TwoLayerElevationLibrary",
@@ -20,4 +21,5 @@ __all__ = [
     "PathLayer",
     "PathType",
     "TerrainAwarePathfinder",
+    "TrailFinderServiceV2",
 ]
