@@ -133,8 +133,11 @@ class TwoLayerElevationLibrary:
         if resolution not in self.RESOLUTIONS:
             raise ValueError(f"Invalid resolution {resolution}. Must be one of {list(self.RESOLUTIONS.keys())}")
 
-        if not os.path.exists(data_dir):
-            raise ValueError(f"Data directory does not exist: {data_dir}")
+        # Create the data directory if it doesn't exist yet (cheap: no downloads).
+        # This lets long-lived services (e.g. a module-level singleton) construct
+        # successfully on a fresh checkout, matching how v1's DEMTileCache lazily
+        # creates its dem_data directory rather than requiring it up front.
+        os.makedirs(data_dir, exist_ok=True)
 
         self.data_dir = data_dir
         self.resolution = resolution
