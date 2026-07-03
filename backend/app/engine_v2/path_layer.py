@@ -15,9 +15,11 @@ This is the module the backend3 rewrite referenced but never implemented.
 Tag vocabularies are ported from app/services/path_preferences.py and
 app/services/obstacle_config.py (the proven v1 configuration).
 """
+import hashlib
 import logging
+import os
 from enum import IntEnum
-from typing import Optional
+from typing import Callable, Optional
 
 import numpy as np
 from rasterio.features import rasterize as _rio_rasterize
@@ -185,3 +187,53 @@ def rasterize_features(paths_gdf, obstacles_gdf, shape, transform) -> np.ndarray
         grid[layer == 1] = ptype
 
     return grid
+
+
+def _default_fetch(bounds, tags):
+    """Fetch OSM features via osmnx. Imported lazily so unit tests never need it."""
+    import osmnx as ox
+    from shapely.geometry import box as shapely_box
+
+    bbox = shapely_box(bounds.west, bounds.south, bounds.east, bounds.north)
+    ox.settings.log_console = False
+    return ox.features_from_polygon(bbox, tags)
+
+
+class PathLayer:
+    """Produces terrain-type grids aligned to elevation arrays, cached on disk."""
+
+    def __init__(self, cache_dir: str, fetch_fn: Optional[Callable] = None):
+        self.cache_dir = cache_dir
+        self.fetch_fn = fetch_fn or _default_fetch
+        os.makedirs(cache_dir, exist_ok=True)
+
+    @staticmethod
+    def get_path_type_name(code: int) -> str:
+        return get_path_type_name(code)
+
+    def _cache_path(self, bounds, shape) -> str:
+        key = f"{bounds.south:.6f}_{bounds.west:.6f}_" f"{bounds.north:.6f}_{bounds.east:.6f}_{shape[0]}x{shape[1]}"
+        digest = hashlib.sha1(key.encode()).hexdigest()[:16]
+        return os.path.join(self.cache_dir, f"pathgrid_{digest}.npy")
+
+    def _safe_fetch(self, bounds, tags):
+        try:
+            return self.fetch_fn(bounds, tags)
+        except Exception as e:
+            logger.warning(f"OSM fetch failed ({e}); continuing without this layer")
+            return None
+
+    def get_grid(self, bounds, shape, transform) -> np.ndarray:
+        cache_file = self._cache_path(bounds, shape)
+        if os.path.exists(cache_file):
+            grid = np.load(cache_file)
+            if grid.shape == tuple(shape):
+                return grid
+        paths_gdf = self._safe_fetch(bounds, PATH_TAGS)
+        obstacles_gdf = self._safe_fetch(bounds, OBSTACLE_TAGS)
+        grid = rasterize_features(paths_gdf, obstacles_gdf, shape, transform)
+        # Only cache real data — a grid built during an OSM outage would
+        # otherwise pin the outage to disk.
+        if paths_gdf is not None or obstacles_gdf is not None:
+            np.save(cache_file, grid)
+        return grid

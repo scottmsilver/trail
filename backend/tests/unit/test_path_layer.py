@@ -118,3 +118,39 @@ class TestRasterizeFeatures:
         grid = rasterize_features(_gdf([]), _gdf([]), SHAPE, TRANSFORM)
         assert grid.shape == SHAPE
         assert (grid == PathType.UNKNOWN).all()
+
+
+from app.engine_v2.elevation import Bounds
+from app.engine_v2.path_layer import PathLayer
+
+BOUNDS = Bounds(south=40.64, north=40.65, west=-111.51, east=-111.50)
+
+
+class TestPathLayer:
+    def test_get_grid_uses_injected_fetcher_and_caches(self, tmp_path):
+        calls = []
+
+        def fake_fetch(bounds, tags):
+            calls.append(tags)
+            if "building" in tags:  # obstacle query
+                return _gdf([])
+            trail = LineString([(-111.51, 40.645), (-111.50, 40.645)])
+            return _gdf([(trail, {"highway": "path"})])
+
+        layer = PathLayer(cache_dir=str(tmp_path), fetch_fn=fake_fetch)
+        grid1 = layer.get_grid(BOUNDS, SHAPE, TRANSFORM)
+        assert (grid1 == PathType.TRAIL).any()
+        assert len(calls) == 2  # one paths fetch + one obstacles fetch
+
+        # Second call: served from disk cache, no new fetches
+        grid2 = layer.get_grid(BOUNDS, SHAPE, TRANSFORM)
+        assert len(calls) == 2
+        assert np.array_equal(grid1, grid2)
+
+    def test_fetch_failure_degrades_to_unknown_grid(self, tmp_path):
+        def broken_fetch(bounds, tags):
+            raise ConnectionError("overpass down")
+
+        layer = PathLayer(cache_dir=str(tmp_path), fetch_fn=broken_fetch)
+        grid = layer.get_grid(BOUNDS, SHAPE, TRANSFORM)
+        assert (grid == PathType.UNKNOWN).all()
