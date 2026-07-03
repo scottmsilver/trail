@@ -154,3 +154,36 @@ class TestPathLayer:
         layer = PathLayer(cache_dir=str(tmp_path), fetch_fn=broken_fetch)
         grid = layer.get_grid(BOUNDS, SHAPE, TRANSFORM)
         assert (grid == PathType.UNKNOWN).all()
+
+    def test_outage_grid_is_not_cached(self, tmp_path):
+        """A grid built during a total OSM outage must never be pinned to disk."""
+        calls = []
+
+        def broken_fetch(bounds, tags):
+            calls.append(tags)
+            raise ConnectionError("overpass down")
+
+        layer = PathLayer(cache_dir=str(tmp_path), fetch_fn=broken_fetch)
+        grid = layer.get_grid(BOUNDS, SHAPE, TRANSFORM)
+        assert (grid == PathType.UNKNOWN).all()
+        assert len(calls) == 2  # paths + obstacles both attempted
+
+        # Nothing written to the cache dir during the outage
+        assert not any(tmp_path.iterdir())
+
+        # Recovery: swap in a working fetcher on the same instance; the next
+        # get_grid must fetch again (no stale outage cache to serve from).
+        def working_fetch(bounds, tags):
+            calls.append(tags)
+            if "building" in tags:  # obstacle query
+                return _gdf([])
+            trail = LineString([(-111.51, 40.645), (-111.50, 40.645)])
+            return _gdf([(trail, {"highway": "path"})])
+
+        layer.fetch_fn = working_fetch
+        grid2 = layer.get_grid(BOUNDS, SHAPE, TRANSFORM)
+        assert len(calls) == 4  # re-fetched: two more calls
+        assert (grid2 == PathType.TRAIL).any()
+
+        # The recovered (real) grid IS cached now
+        assert any(p.suffix == ".npy" for p in tmp_path.iterdir())
