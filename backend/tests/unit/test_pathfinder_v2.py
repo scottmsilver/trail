@@ -100,9 +100,17 @@ class TestWeightedAStar:
         rng_rows, rng_cols = np.meshgrid(np.arange(SHAPE[0]), np.arange(SHAPE[1]), indexing="ij")
         elevation += 3.0 * np.sin(rng_rows / 3.0) * np.cos(rng_cols / 3.0)
 
+        # The default off-path (UNKNOWN) terrain multiplier is 0.5, which makes
+        # true move costs ~half the euclidean heuristic — i.e. h is inadmissible
+        # (h > true cost), so even weight=1.0 behaves greedily and a higher
+        # weight cannot show an effect. Weight effects are only observable
+        # against an admissible baseline, so normalize off-path cost to 1.0
+        # (cost >= distance).
         pf1 = make_pathfinder(elevation=elevation, heuristic_weight=1.0)
+        pf1.terrain_costs[PathType.UNKNOWN] = 1.0  # make h admissible: cost >= distance
         r1 = pf1.find_path(*START, *END)
         pf2 = make_pathfinder(elevation=elevation, heuristic_weight=2.0)
+        pf2.terrain_costs[PathType.UNKNOWN] = 1.0
         r2 = pf2.find_path(*START, *END)
 
         assert r1 is not None and r2 is not None
