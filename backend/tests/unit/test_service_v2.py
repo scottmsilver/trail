@@ -178,6 +178,38 @@ async def test_find_route_through_fd_wrapper():
     assert stats["engine"] == "v2"
 
 
+def test_cache_dirs_default_when_no_env_or_arg(monkeypatch):
+    """No constructor arg, no env var -> falls back to legacy CWD-relative defaults."""
+    monkeypatch.delenv("TRAIL_V2_DEM_DIR", raising=False)
+    monkeypatch.delenv("TRAIL_V2_PATH_CACHE_DIR", raising=False)
+    service = TrailFinderServiceV2(elevation_lib=FakeElevationLib(), path_layer=FakePathLayer())
+    assert service._data_dir == "dem_data_v2"
+    assert service._cache_dir == "path_cache_v2"
+
+
+def test_cache_dirs_follow_env_vars(monkeypatch):
+    """Env vars override the legacy defaults when no explicit constructor arg is given."""
+    monkeypatch.setenv("TRAIL_V2_DEM_DIR", "/shared/dem_data_v2")
+    monkeypatch.setenv("TRAIL_V2_PATH_CACHE_DIR", "/shared/path_cache_v2")
+    service = TrailFinderServiceV2(elevation_lib=FakeElevationLib(), path_layer=FakePathLayer())
+    assert service._data_dir == "/shared/dem_data_v2"
+    assert service._cache_dir == "/shared/path_cache_v2"
+
+
+def test_explicit_cache_dir_args_beat_env_vars(monkeypatch):
+    """Explicit constructor args take precedence over env vars."""
+    monkeypatch.setenv("TRAIL_V2_DEM_DIR", "/shared/dem_data_v2")
+    monkeypatch.setenv("TRAIL_V2_PATH_CACHE_DIR", "/shared/path_cache_v2")
+    service = TrailFinderServiceV2(
+        data_dir="/explicit/dem",
+        cache_dir="/explicit/cache",
+        elevation_lib=FakeElevationLib(),
+        path_layer=FakePathLayer(),
+    )
+    assert service._data_dir == "/explicit/dem"
+    assert service._cache_dir == "/explicit/cache"
+
+
 @pytest.mark.asyncio
 async def test_coefficient_dict_transform_converted():
     """TwoLayerElevationLibrary's metadata carries the transform as an

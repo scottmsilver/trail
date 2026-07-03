@@ -11,6 +11,7 @@
 import asyncio
 import logging
 import math
+import os
 import threading
 from typing import List, Optional, Tuple
 
@@ -27,8 +28,8 @@ logger = logging.getLogger(__name__)
 class TrailFinderServiceV2:
     def __init__(
         self,
-        data_dir: str = "dem_data_v2",
-        cache_dir: str = "path_cache_v2",
+        data_dir: Optional[str] = None,
+        cache_dir: Optional[str] = None,
         resolution: int = 10,
         buffer: float = 0.02,
         max_distance_km: float = 50.0,
@@ -38,12 +39,22 @@ class TrailFinderServiceV2:
         self.buffer = buffer
         self.resolution = resolution
         self.max_distance_km = max_distance_km
+        # Cache dirs are shared, derived-data artifacts (DEM tiles, OSM path
+        # grids) -- identical for any caller, so they resolve from an
+        # explicit constructor arg, then an env var, then the legacy
+        # CWD-relative default. This lets any client/eval/CI point at one
+        # shared cache instead of cold-starting a private copy per CWD.
+        self._data_dir = data_dir if data_dir is not None else os.environ.get("TRAIL_V2_DEM_DIR", "dem_data_v2")
+        self._cache_dir = (
+            cache_dir if cache_dir is not None else os.environ.get("TRAIL_V2_PATH_CACHE_DIR", "path_cache_v2")
+        )
+        logger.info("v2 engine cache locations: data_dir=%s cache_dir=%s", self._data_dir, self._cache_dir)
         # Bound open file descriptors by default: the plain library grows
         # _open_datasets unboundedly on a long-lived module-level service.
         self.elevation_lib = elevation_lib or FDManagedElevationLibrary(
-            TwoLayerElevationLibrary(data_dir=data_dir, resolution=resolution), max_open_files=50
+            TwoLayerElevationLibrary(data_dir=self._data_dir, resolution=resolution), max_open_files=50
         )
-        self.path_layer = path_layer or PathLayer(cache_dir=cache_dir)
+        self.path_layer = path_layer or PathLayer(cache_dir=self._cache_dir)
         # Shared library + close_all() clears all open datasets, so data
         # loading must be serialized per service instance.
         self._data_lock = threading.Lock()
