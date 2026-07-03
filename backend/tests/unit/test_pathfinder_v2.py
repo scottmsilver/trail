@@ -81,3 +81,33 @@ def test_max_slope_enforced():
     pf = make_pathfinder(elevation=elevation)
     pf.set_parameters(max_slope_degrees=45.0)
     assert pf.find_path(*START, *END) is None
+
+
+class TestWeightedAStar:
+    def test_weight_one_follows_cheap_corridor(self):
+        # Optimal search must take the trail corridor even though it's longer
+        terrain = OPEN.copy()
+        terrain[:, 5] = PathType.TRAIL  # cheap vertical corridor at col 5
+        pf = make_pathfinder(terrain=terrain, heuristic_weight=1.0)
+        result = pf.find_path(40.6401, -111.5095, 40.6428, -111.5095)  # along col 5
+        assert result is not None
+        _, stats = result
+        assert stats["terrain_breakdown"].get("trail", 0) > 0.8
+
+    def test_higher_weight_explores_fewer_nodes(self):
+        elevation = FLAT.copy()
+        # Bumpy terrain so the search actually has work to do
+        rng_rows, rng_cols = np.meshgrid(np.arange(SHAPE[0]), np.arange(SHAPE[1]), indexing="ij")
+        elevation += 3.0 * np.sin(rng_rows / 3.0) * np.cos(rng_cols / 3.0)
+
+        pf1 = make_pathfinder(elevation=elevation, heuristic_weight=1.0)
+        r1 = pf1.find_path(*START, *END)
+        pf2 = make_pathfinder(elevation=elevation, heuristic_weight=2.0)
+        r2 = pf2.find_path(*START, *END)
+
+        assert r1 is not None and r2 is not None
+        _, stats1 = r1
+        path2, stats2 = r2
+        assert stats2["nodes_explored"] < stats1["nodes_explored"]
+        # Bounded quality loss (spec: ~15%; allow slack on tiny grids)
+        assert stats2["distance_m"] <= stats1["distance_m"] * 1.2
