@@ -10,9 +10,11 @@
 """Engine v2: two-layer elevation + terrain-aware weighted A* pathfinding."""
 from app.engine_v2.elevation import Bounds, TwoLayerElevationLibrary
 from app.engine_v2.elevation_fd_safe import FDManagedElevationLibrary
+from app.engine_v2.path_layer import PathType
 
 __all__ = [
     "TwoLayerElevationLibrary",
     "Bounds",
     "FDManagedElevationLibrary",
+    "PathType",
 ]
