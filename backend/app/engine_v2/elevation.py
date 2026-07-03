@@ -838,6 +838,13 @@ class TwoLayerElevationLibrary:
             ds.close()
         self._open_datasets.clear()
 
+    def close_all(self):
+        """Public FD-release hook used by the FD-managed wrapper and the v2 service.
+
+        Closes and clears all cached rasterio datasets (_open_datasets).
+        """
+        self._cleanup_cache()
+
     def __del__(self):
         """Cleanup when object is destroyed"""
         self._cleanup_cache()

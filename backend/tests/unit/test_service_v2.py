@@ -10,6 +10,7 @@
 """Unit tests for TrailFinderServiceV2 using injected fakes (no network)."""
 import numpy as np
 import pytest
+from app.engine_v2.elevation import Bounds
 from app.engine_v2.elevation_fd_safe import FDManagedElevationLibrary
 from app.engine_v2.path_layer import PathType
 from app.engine_v2.service import TrailFinderServiceV2
@@ -131,3 +132,68 @@ def test_default_elevation_lib_is_fd_managed(tmp_path):
     (tmp_path / "dem").mkdir()  # TwoLayerElevationLibrary requires an existing dir
     service = TrailFinderServiceV2(data_dir=str(tmp_path / "dem"), cache_dir=str(tmp_path / "cache"))
     assert isinstance(service.elevation_lib, FDManagedElevationLibrary)
+
+
+class StubBase:
+    """Stand-in for TwoLayerElevationLibrary behind the FD-managed wrapper."""
+
+    def __init__(self):
+        self.loaded = []
+        self.close_all_called = False
+
+    def load_area(self, bounds):
+        self.loaded.append(bounds)
+        return {"total_tiles": 1}
+
+    def get_elevation_array(self, bounds):
+        transform = from_bounds(bounds.west, bounds.south, bounds.east, bounds.north, SHAPE[1], SHAPE[0])
+        return np.zeros(SHAPE, dtype=np.float32), {"transform": transform, "resolution": 10}
+
+    def close_all(self):
+        self.close_all_called = True
+
+
+def test_fd_wrapper_delegates_get_elevation_array_and_close_all():
+    """Wrapper must expose get_elevation_array (delegation) and its close_all
+    must reach the base library's dataset cache."""
+    stub = StubBase()
+    wrapper = FDManagedElevationLibrary(stub)
+    bounds = Bounds(south=40.63, north=40.66, west=-111.53, east=-111.49)
+
+    data, meta = wrapper.get_elevation_array(bounds)
+    assert data.shape == SHAPE
+    assert "transform" in meta
+
+    wrapper.close_all()
+    assert stub.close_all_called
+
+
+@pytest.mark.asyncio
+async def test_find_route_through_fd_wrapper():
+    """Regression test: default wiring routes through FDManagedElevationLibrary;
+    find_route must work end-to-end through the wrapper (no AttributeError)."""
+    service = TrailFinderServiceV2(elevation_lib=FDManagedElevationLibrary(StubBase()), path_layer=FakePathLayer())
+    path, stats = await service.find_route(START, END, {"buffer": 0.001})
+    assert len(path) > 0
+    assert stats["engine"] == "v2"
+
+
+@pytest.mark.asyncio
+async def test_coefficient_dict_transform_converted():
+    """TwoLayerElevationLibrary's metadata carries the transform as an
+    {a,b,c,d,e,f} dict -- the service must convert it to a real Affine."""
+
+    class DictTransformBase(StubBase):
+        def get_elevation_array(self, bounds):
+            data, meta = super().get_elevation_array(bounds)
+            t = meta["transform"]
+            meta["transform"] = {"a": t.a, "b": t.b, "c": t.c, "d": t.d, "e": t.e, "f": t.f}
+            return data, meta
+
+    service = TrailFinderServiceV2(
+        elevation_lib=FDManagedElevationLibrary(DictTransformBase()), path_layer=FakePathLayer()
+    )
+    path, stats = await service.find_route(START, END, {"buffer": 0.001})
+    assert len(path) > 0
+    assert stats["engine"] == "v2"
+    assert stats["distance_m"] > 0

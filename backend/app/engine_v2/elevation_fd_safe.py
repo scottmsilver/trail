@@ -67,11 +67,19 @@ class FDManagedElevationLibrary:
         return ds
 
     def close_all(self):
-        """Close all open datasets"""
+        """Close all open datasets, including those cached by the base library.
+
+        get_elevation_array delegates to the base library, whose dataset cache
+        (_open_datasets) holds the FDs that delegation actually opened — so
+        close_all must reach the base cache too.
+        """
         for ds in self._open_datasets.values():
             ds.close()
         self._open_datasets.clear()
         self._access_count.clear()
+        base_close_all = getattr(self.base_lib, "close_all", None)
+        if callable(base_close_all):
+            base_close_all()
 
     def __del__(self):
         """Cleanup on deletion"""
@@ -80,6 +88,14 @@ class FDManagedElevationLibrary:
     def load_area(self, bounds):
         """Delegate load_area to base library"""
         return self.base_lib.load_area(bounds)
+
+    def get_elevation_array(self, bounds):
+        """Delegate get_elevation_array to the base library.
+
+        Datasets opened by this call live in the base library's cache;
+        close_all() (above) clears that cache as well.
+        """
+        return self.base_lib.get_elevation_array(bounds)
 
     @contextmanager
     def batch_operation(self):

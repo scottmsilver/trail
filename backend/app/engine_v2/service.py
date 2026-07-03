@@ -19,7 +19,7 @@ from app.engine_v2.elevation_fd_safe import FDManagedElevationLibrary
 from app.engine_v2.path_layer import PathLayer, PathType
 from app.engine_v2.pathfinder import TerrainAwarePathfinder
 from app.models.route import Coordinate
-from rasterio.transform import from_bounds
+from rasterio.transform import Affine, from_bounds
 
 logger = logging.getLogger(__name__)
 
@@ -171,8 +171,22 @@ class TrailFinderServiceV2:
         with self._data_lock:
             self.elevation_lib.load_area(bounds)
             elevation, meta = self.elevation_lib.get_elevation_array(bounds)
-            transform = meta.get("transform") if isinstance(meta, dict) else None
-            if transform is None:
+            # TwoLayerElevationLibrary's metadata carries the transform as a
+            # coefficient dict {a,b,c,d,e,f}; injected fakes may pass a real
+            # Affine. The pathfinder needs a rasterio Affine.
+            raw_transform = meta.get("transform") if isinstance(meta, dict) else None
+            if isinstance(raw_transform, Affine):
+                transform = raw_transform
+            elif isinstance(raw_transform, dict) and all(k in raw_transform for k in "abcdef"):
+                transform = Affine(
+                    raw_transform["a"],
+                    raw_transform["b"],
+                    raw_transform["c"],
+                    raw_transform["d"],
+                    raw_transform["e"],
+                    raw_transform["f"],
+                )
+            else:
                 transform = from_bounds(
                     bounds.west, bounds.south, bounds.east, bounds.north, elevation.shape[1], elevation.shape[0]
                 )
