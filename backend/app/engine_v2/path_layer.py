@@ -20,6 +20,7 @@ from enum import IntEnum
 from typing import Optional
 
 import numpy as np
+from rasterio.features import rasterize as _rio_rasterize
 
 logger = logging.getLogger(__name__)
 
@@ -127,3 +128,60 @@ def get_path_type_name(code: int) -> str:
         return _TYPE_NAMES[PathType(code)]
     except ValueError:
         return "invalid"
+
+
+# Rasterization precedence, low to high. Later entries overwrite earlier ones;
+# obstacles are stamped last so they always win (safety).
+_PRECEDENCE = [
+    PathType.NATURAL,
+    PathType.RESIDENTIAL,
+    PathType.FOOTWAY,
+    PathType.PATH,
+    PathType.TRAIL,
+    PathType.OBSTACLE,
+]
+
+
+def rasterize_features(paths_gdf, obstacles_gdf, shape, transform) -> np.ndarray:
+    """
+    Rasterize classified OSM features onto a grid of PathType codes.
+
+    paths_gdf/obstacles_gdf: GeoDataFrames (EPSG:4326) as returned by
+    osmnx.features_from_polygon, or empty. shape/transform must match the
+    elevation array exactly so the grids align cell-for-cell.
+    """
+    grid = np.full(shape, PathType.UNKNOWN, dtype=np.uint8)
+
+    shapes_by_type = {t: [] for t in _PRECEDENCE}
+
+    if paths_gdf is not None and len(paths_gdf) > 0:
+        for _, row in paths_gdf.iterrows():
+            geom = row.get("geometry")
+            if geom is None or geom.is_empty:
+                continue
+            ptype = classify_feature(row.to_dict())
+            if ptype in shapes_by_type:
+                shapes_by_type[ptype].append(geom)
+
+    if obstacles_gdf is not None and len(obstacles_gdf) > 0:
+        for _, row in obstacles_gdf.iterrows():
+            geom = row.get("geometry")
+            if geom is None or geom.is_empty:
+                continue
+            shapes_by_type[PathType.OBSTACLE].append(geom)
+
+    for ptype in _PRECEDENCE:
+        geoms = shapes_by_type[ptype]
+        if not geoms:
+            continue
+        layer = _rio_rasterize(
+            [(g, 1) for g in geoms],
+            out_shape=shape,
+            transform=transform,
+            fill=0,
+            all_touched=True,
+            dtype=np.uint8,
+        )
+        grid[layer == 1] = ptype
+
+    return grid

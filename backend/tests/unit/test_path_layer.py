@@ -59,3 +59,62 @@ def test_path_type_names():
     assert get_path_type_name(PathType.TRAIL) == "trail"
     assert get_path_type_name(PathType.UNKNOWN) == "off_path"
     assert get_path_type_name(255) == "invalid"
+
+
+import geopandas as gpd
+import numpy as np
+from app.engine_v2.path_layer import rasterize_features
+from rasterio.transform import from_bounds
+from shapely.geometry import LineString, Polygon
+
+# 10x10 grid covering a 0.01 x 0.01 degree box
+SHAPE = (10, 10)
+TRANSFORM = from_bounds(-111.51, 40.64, -111.50, 40.65, SHAPE[1], SHAPE[0])
+
+
+def _gdf(geoms_and_tags):
+    """Build a GeoDataFrame from [(geometry, {tag: value}), ...]."""
+    if not geoms_and_tags:
+        return gpd.GeoDataFrame(geometry=[], crs="EPSG:4326")
+    records = []
+    for geom, tags in geoms_and_tags:
+        rec = dict(tags)
+        rec["geometry"] = geom
+        records.append(rec)
+    return gpd.GeoDataFrame(records, crs="EPSG:4326")
+
+
+class TestRasterizeFeatures:
+    def test_trail_line_marks_trail_cells(self):
+        # Horizontal trail across the middle of the box
+        trail = LineString([(-111.51, 40.645), (-111.50, 40.645)])
+        grid = rasterize_features(_gdf([(trail, {"highway": "path"})]), _gdf([]), SHAPE, TRANSFORM)
+        assert grid.dtype == np.uint8
+        assert (grid == PathType.TRAIL).sum() >= SHAPE[1]  # touches every column
+        assert (grid == PathType.UNKNOWN).sum() > 0  # rest is off-path
+
+    def test_obstacle_wins_over_trail(self):
+        trail = LineString([(-111.51, 40.645), (-111.50, 40.645)])
+        water = Polygon([(-111.51, 40.64), (-111.505, 40.64), (-111.505, 40.65), (-111.51, 40.65)])  # left half
+        grid = rasterize_features(
+            _gdf([(trail, {"highway": "path"})]), _gdf([(water, {"natural": "water"})]), SHAPE, TRANSFORM
+        )
+        # Left half is obstacle even where the trail crosses it
+        left = grid[:, : SHAPE[1] // 2 - 1]
+        assert (left == PathType.OBSTACLE).all()
+        # Trail still visible on the right half
+        assert (grid[:, SHAPE[1] // 2 + 1 :] == PathType.TRAIL).any()
+
+    def test_trail_wins_over_park(self):
+        park = Polygon([(-111.51, 40.64), (-111.50, 40.64), (-111.50, 40.65), (-111.51, 40.65)])  # whole box
+        trail = LineString([(-111.51, 40.645), (-111.50, 40.645)])
+        grid = rasterize_features(
+            _gdf([(park, {"leisure": "park"}), (trail, {"highway": "path"})]), _gdf([]), SHAPE, TRANSFORM
+        )
+        assert (grid == PathType.TRAIL).any()
+        assert (grid == PathType.NATURAL).any()
+
+    def test_empty_inputs_give_unknown_grid(self):
+        grid = rasterize_features(_gdf([]), _gdf([]), SHAPE, TRANSFORM)
+        assert grid.shape == SHAPE
+        assert (grid == PathType.UNKNOWN).all()
