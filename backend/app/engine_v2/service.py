@@ -11,9 +11,11 @@
 import asyncio
 import logging
 import math
+import threading
 from typing import List, Optional, Tuple
 
 from app.engine_v2.elevation import Bounds, TwoLayerElevationLibrary
+from app.engine_v2.elevation_fd_safe import FDManagedElevationLibrary
 from app.engine_v2.path_layer import PathLayer, PathType
 from app.engine_v2.pathfinder import TerrainAwarePathfinder
 from app.models.route import Coordinate
@@ -36,8 +38,15 @@ class TrailFinderServiceV2:
         self.buffer = buffer
         self.resolution = resolution
         self.max_distance_km = max_distance_km
-        self.elevation_lib = elevation_lib or TwoLayerElevationLibrary(data_dir=data_dir, resolution=resolution)
+        # Bound open file descriptors by default: the plain library grows
+        # _open_datasets unboundedly on a long-lived module-level service.
+        self.elevation_lib = elevation_lib or FDManagedElevationLibrary(
+            TwoLayerElevationLibrary(data_dir=data_dir, resolution=resolution), max_open_files=50
+        )
         self.path_layer = path_layer or PathLayer(cache_dir=cache_dir)
+        # Shared library + close_all() clears all open datasets, so data
+        # loading must be serialized per service instance.
+        self._data_lock = threading.Lock()
 
     # --- validation (same semantics as v1) -------------------------------
     @staticmethod
@@ -156,17 +165,21 @@ class TrailFinderServiceV2:
         warnings: List[str] = []
         bounds = self.calculate_bounding_box(start, end, options.get("buffer"))
 
-        self.elevation_lib.load_area(bounds)
-        elevation, meta = self.elevation_lib.get_elevation_array(bounds)
-        transform = meta.get("transform") if isinstance(meta, dict) else None
-        if transform is None:
-            transform = from_bounds(
-                bounds.west, bounds.south, bounds.east, bounds.north, elevation.shape[1], elevation.shape[0]
-            )
-        if hasattr(self.elevation_lib, "close_all"):
-            self.elevation_lib.close_all()
+        # Shared library + close_all() clears all open datasets, so data
+        # loading must be serialized per service instance. The lock also
+        # serializes PathLayer's non-atomic npy cache write.
+        with self._data_lock:
+            self.elevation_lib.load_area(bounds)
+            elevation, meta = self.elevation_lib.get_elevation_array(bounds)
+            transform = meta.get("transform") if isinstance(meta, dict) else None
+            if transform is None:
+                transform = from_bounds(
+                    bounds.west, bounds.south, bounds.east, bounds.north, elevation.shape[1], elevation.shape[0]
+                )
+            if hasattr(self.elevation_lib, "close_all"):
+                self.elevation_lib.close_all()
 
-        terrain_grid = self.path_layer.get_grid(bounds, elevation.shape, transform)
+            terrain_grid = self.path_layer.get_grid(bounds, elevation.shape, transform)
         if not (terrain_grid != PathType.UNKNOWN).any():
             warnings.append("OSM data unavailable — terrain-only routing")
 

@@ -10,6 +10,7 @@
 """Unit tests for TrailFinderServiceV2 using injected fakes (no network)."""
 import numpy as np
 import pytest
+from app.engine_v2.elevation_fd_safe import FDManagedElevationLibrary
 from app.engine_v2.path_layer import PathType
 from app.engine_v2.service import TrailFinderServiceV2
 from app.models.route import Coordinate
@@ -123,3 +124,10 @@ async def test_user_profile_preset_applied():
     await service.find_route(START, END, {"userProfile": "experienced"})
     assert captured["costs"][PathType.TRAIL] == pytest.approx(0.15)
     assert captured["costs"][PathType.UNKNOWN] == pytest.approx(0.4)
+
+
+def test_default_elevation_lib_is_fd_managed(tmp_path):
+    """Default wiring must bound open file descriptors via the managed wrapper."""
+    (tmp_path / "dem").mkdir()  # TwoLayerElevationLibrary requires an existing dir
+    service = TrailFinderServiceV2(data_dir=str(tmp_path / "dem"), cache_dir=str(tmp_path / "cache"))
+    assert isinstance(service.elevation_lib, FDManagedElevationLibrary)
