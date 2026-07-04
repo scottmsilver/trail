@@ -14,7 +14,34 @@ import hashlib
 from dataclasses import dataclass
 import logging
 
+from app.services.lru import MISSING, BoundedLRUCache
+
 logger = logging.getLogger(__name__)
+
+# Each ~1km tile is ~2.2MB resident. A single route touches 144-400 tiles and
+# within-region reuse saturates by ~768 tiles (LRU locality study), so bound the
+# in-memory tile cache instead of growing without limit (reached ~14GB in prod).
+DEFAULT_MAX_MEMORY_TILES = 768
+
+
+def _env_max_memory_tiles():
+    """Resolve the tile cache bound from TILE_CACHE_MAX_TILES, tolerating bad input.
+
+    A non-integer or <1 value falls back to DEFAULT_MAX_MEMORY_TILES rather than
+    crashing startup (ValueError) or silently reintroducing unbounded growth.
+    """
+    raw = os.environ.get("TILE_CACHE_MAX_TILES")
+    if raw is None:
+        return DEFAULT_MAX_MEMORY_TILES
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        logger.warning("Ignoring invalid TILE_CACHE_MAX_TILES=%r; using default %d", raw, DEFAULT_MAX_MEMORY_TILES)
+        return DEFAULT_MAX_MEMORY_TILES
+    if value < 1:
+        logger.warning("TILE_CACHE_MAX_TILES=%d < 1 would disable the bound; using default %d", value, DEFAULT_MAX_MEMORY_TILES)
+        return DEFAULT_MAX_MEMORY_TILES
+    return value
 
 @dataclass
 class Tile:
@@ -31,7 +58,7 @@ class TiledDEMCache:
     Each tile covers a fixed geographic area (e.g., 0.01 degrees).
     """
     
-    def __init__(self, tile_size_degrees: float = 0.01, cache_dir: str = "tile_cache"):
+    def __init__(self, tile_size_degrees: float = 0.01, cache_dir: str = "tile_cache", max_memory_tiles: int = None):
         """
         Initialize the tiled cache.
         
@@ -41,7 +68,11 @@ class TiledDEMCache:
         """
         self.tile_size = tile_size_degrees
         self.cache_dir = os.path.abspath(cache_dir)
-        self.memory_cache: Dict[str, Dict] = {}  # In-memory cache of tiles
+        if max_memory_tiles is None:
+            max_memory_tiles = _env_max_memory_tiles()
+        self.max_memory_tiles = max_memory_tiles
+        # LRU-bounded so the process can't accumulate every tile ever queried.
+        self.memory_cache: Dict[str, Dict] = BoundedLRUCache(max_memory_tiles)  # In-memory cache of tiles
         
         # Create cache directory if it doesn't exist
         os.makedirs(self.cache_dir, exist_ok=True)
@@ -130,9 +161,10 @@ class TiledDEMCache:
         # Check memory cache first
         tile_key = self._get_tile_key(tile_x, tile_y, data_type)
         
-        if tile_key in self.memory_cache:
+        cached = self.memory_cache.get(tile_key, MISSING)
+        if cached is not MISSING:
             logger.info(f"[TILE CACHE HIT] Memory cache hit for {data_type} tile ({tile_x}, {tile_y})")
-            return self.memory_cache[tile_key]
+            return cached
         
         # Check disk cache
         tile_data = self.load_tile_from_disk(tile_x, tile_y, data_type)

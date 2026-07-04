@@ -5,6 +5,8 @@ import SearchBox from './components/SearchBox/SearchBox'
 import AlgorithmDebug from './components/AlgorithmDebug/AlgorithmDebug'
 import CalibrationToolbar from './components/CalibrationToolbar/CalibrationToolbar'
 import PrepopulateArea from './components/PrepopulateArea/PrepopulateArea'
+import SavedLocations from './components/SavedLocations/SavedLocations'
+import { useSavedLocations, type SavedLocation } from './hooks/useSavedLocations'
 import api from './services/api'
 import type { Coordinate, RouteResult, RouteOptions } from './services/api'
 import L from 'leaflet'
@@ -29,23 +31,55 @@ function App() {
   const [cacheProgress, setCacheProgress] = useState<{active: boolean, message: string} | null>(null)
   const mapRef = useRef<L.Map | null>(null)
 
+  const {
+    presets,
+    recents,
+    addPreset,
+    updatePreset,
+    deletePreset,
+    recordRecent,
+    promoteRecentToPreset,
+  } = useSavedLocations()
+
+  // The point offered to "Save current point": prefer end, then start, then center.
+  const currentPoint = end || start || mapCenter
+
+  const useAsStart = (loc: SavedLocation) => {
+    const coord = { lat: loc.lat, lon: loc.lon }
+    setStart(coord)
+    setMapCenter(coord)
+    recordRecent(loc.lat, loc.lon, loc.name)
+    setStatus(`Start set to "${loc.name}".`)
+  }
+
+  const useAsEnd = (loc: SavedLocation) => {
+    const coord = { lat: loc.lat, lon: loc.lon }
+    setEnd(coord)
+    setMapCenter(coord)
+    recordRecent(loc.lat, loc.lon, loc.name)
+    setStatus(`End set to "${loc.name}".`)
+  }
+
   const handleMapClick = (coord: Coordinate) => {
     // If a route has been found, don't accept new clicks
     if (route) {
       return
     }
-    
+
     if (!start) {
       setStart(coord)
+      recordRecent(coord.lat, coord.lon)
       setStatus('Start point set. Click to set end point.')
     } else if (!end) {
       setEnd(coord)
+      recordRecent(coord.lat, coord.lon)
       setStatus('End point set. Click "Find Route" to calculate.')
     } else {
       // Reset
       setStart(coord)
       setEnd(null)
       setRoute(null)
+      recordRecent(coord.lat, coord.lon)
       setStatus('Start point set. Click to set end point.')
     }
   }
@@ -56,19 +90,19 @@ function App() {
     setLoading(true)
     setStatus('Calculating route...')
     const startTime = performance.now()
-    
+
     try {
       // Use the imported api instance with all route options
       const response = await api.calculateRoute(start, end, routeOptions)
-      
+
       // Poll for status
       let retries = 0
       const maxRetries = 30
-      
+
       while (retries < maxRetries) {
         const status = await api.getRouteStatus(response.routeId)
         setStatus(`Processing: ${status.progress}%`)
-        
+
         if (status.status === 'completed') {
           try {
             const routeData = await api.getRoute(response.routeId)
@@ -88,7 +122,7 @@ function App() {
           setStatus('Route calculation failed: ' + status.message)
           break
         }
-        
+
         await new Promise(resolve => setTimeout(resolve, 1000))
         retries++
       }
@@ -105,7 +139,7 @@ function App() {
     setDebugLoading(true)
     setStatus('Calculating route with debug info...')
     const startTime = performance.now()
-    
+
     try {
       const debugResult: RouteResult = await api.calculateDebugRoute(start, end, routeOptions)
       const endTime = performance.now()
@@ -114,10 +148,10 @@ function App() {
       console.log('Debug result:', debugResult)
       console.log('Debug result stats:', debugResult.stats)
       console.log('Debug data present:', !!debugResult.stats?.debug_data)
-      
+
       // Set the route data
       setRoute(debugResult)
-      
+
       // Set debug data and show debug panel
       if (debugResult.stats && debugResult.stats.debug_data) {
         setDebugData(debugResult.stats.debug_data)
@@ -150,10 +184,10 @@ function App() {
 
   const exportGPX = async () => {
     if (!route) return
-    
+
     try {
       setStatus('Exporting route as GPX...')
-      
+
       // Use the route ID if it exists, otherwise use the export endpoint
       if (route.routeId && route.routeId !== 'debug') {
         // Download from existing route
@@ -161,7 +195,7 @@ function App() {
         if (!response.ok) {
           throw new Error('Failed to export GPX')
         }
-        
+
         const blob = await response.blob()
         const url = window.URL.createObjectURL(blob)
         const a = document.createElement('a')
@@ -171,7 +205,7 @@ function App() {
         a.click()
         document.body.removeChild(a)
         window.URL.revokeObjectURL(url)
-        
+
         setStatus('GPX file downloaded successfully!')
       } else {
         // Export directly from current route data
@@ -179,7 +213,7 @@ function App() {
           setStatus('No route data to export')
           return
         }
-        
+
         const response = await api.exportRouteAsGPX(start, end, routeOptions)
         const blob = await response.blob()
         const url = window.URL.createObjectURL(blob)
@@ -190,7 +224,7 @@ function App() {
         a.click()
         document.body.removeChild(a)
         window.URL.revokeObjectURL(url)
-        
+
         setStatus('GPX file exported successfully!')
       }
     } catch (error) {
@@ -201,6 +235,7 @@ function App() {
 
   const handleLocationSelect = (lat: number, lon: number, name?: string) => {
     setMapCenter({ lat, lon })
+    recordRecent(lat, lon, name)
     if (name) {
       setStatus(`Centered on: ${name}`)
     }
@@ -213,7 +248,7 @@ function App() {
     // Add 20% buffer to each side
     const latBuffer = (bounds.getNorth() - bounds.getSouth()) * 0.2
     const lonBuffer = (bounds.getEast() - bounds.getWest()) * 0.2
-    
+
     const expandedBounds = {
       north: bounds.getNorth() + latBuffer,
       south: bounds.getSouth() - latBuffer,
@@ -222,11 +257,11 @@ function App() {
     }
 
     // Calculate approximate area
-    const approxAreaKm2 = (expandedBounds.north - expandedBounds.south) * 111 * 
+    const approxAreaKm2 = (expandedBounds.north - expandedBounds.south) * 111 *
                          (expandedBounds.east - expandedBounds.west) * 111 * 0.7
 
     setCacheProgress({ active: true, message: `Caching ~${approxAreaKm2.toFixed(1)} km² for current view...` })
-    
+
     try {
       const response = await fetch('http://localhost:9001/api/cache/prepopulate-box', {
         method: 'POST',
@@ -246,19 +281,19 @@ function App() {
       }
 
       const data = await response.json()
-      setCacheProgress({ 
-        active: false, 
+      setCacheProgress({
+        active: false,
         message: `✓ Cached ${data.area.area_km2.toFixed(1)} km² (${data.cache_growth.terrain_entries_added} tiles)`
       })
-      
+
       // Clear the success message after 5 seconds
       setTimeout(() => {
         setCacheProgress(null)
       }, 5000)
-      
+
     } catch (err) {
-      setCacheProgress({ 
-        active: false, 
+      setCacheProgress({
+        active: false,
         message: `Error: ${err instanceof Error ? err.message : 'Failed to cache area'}`
       })
       setTimeout(() => {
@@ -273,14 +308,14 @@ function App() {
         <h1>Trail Finder</h1>
         <p>Find the optimal hiking route between two points</p>
       </header>
-      
+
       <main className="app-main">
         <div className="controls">
           <div className="profile-selector">
             <label htmlFor="user-profile">User Profile: </label>
-            <select 
+            <select
               id="user-profile"
-              value={userProfile} 
+              value={userProfile}
               onChange={(e) => {
                 setUserProfile(e.target.value)
                 setRouteOptions({...routeOptions, userProfile: e.target.value})
@@ -295,14 +330,26 @@ function App() {
             </select>
           </div>
 
-          <CalibrationToolbar 
-            options={routeOptions} 
-            onChange={setRouteOptions} 
+          <SavedLocations
+            presets={presets}
+            recents={recents}
+            currentPoint={currentPoint}
+            onUseAsStart={useAsStart}
+            onUseAsEnd={useAsEnd}
+            onAddPreset={addPreset}
+            onUpdatePreset={updatePreset}
+            onDeletePreset={deletePreset}
+            onPromoteRecent={promoteRecentToPreset}
+          />
+
+          <CalibrationToolbar
+            options={routeOptions}
+            onChange={setRouteOptions}
             onPrepopulateClick={() => setShowPrepopulate(true)}
           />
-          
+
           <div className="cost-explorer-controls">
-            <button 
+            <button
               className={`btn-cost-mode ${costPointMode ? 'active' : ''}`}
               onClick={() => {
                 setCostPointMode(!costPointMode)
@@ -313,8 +360,8 @@ function App() {
             >
               {costPointMode ? 'Exit Cost Explorer' : 'Quick Cost Explorer'}
             </button>
-            
-            <button 
+
+            <button
               className="btn-explore-cost"
               onClick={() => {
                 if (mapRef.current) {
@@ -334,8 +381,8 @@ function App() {
             >
               Full Cost Overlay
             </button>
-            
-            <button 
+
+            <button
               className="btn-quick-cache"
               onClick={() => handleQuickCache()}
               title="Cache terrain data for current view area"
@@ -343,21 +390,21 @@ function App() {
               Quick Cache View
             </button>
           </div>
-          
+
           <div className="status">{status || 'Click on the map to set start point.'}</div>
-          
+
           {cacheProgress && (
             <div className={`cache-progress ${cacheProgress.active ? 'active' : 'complete'}`}>
               {cacheProgress.active && <span className="spinner">⏳</span>}
               <span>{cacheProgress.message}</span>
             </div>
           )}
-          
+
           <div className="coordinates">
             {(start || end) && (
               <>
                 {start && end && (
-                  <button 
+                  <button
                     className="copy-coords-btn"
                     onClick={() => {
                       const coordsText = `"Start: ${start.lat.toFixed(4)}, ${start.lon.toFixed(4)}" "End: ${end.lat.toFixed(4)}, ${end.lon.toFixed(4)}"`
@@ -389,29 +436,29 @@ function App() {
               </>
             )}
           </div>
-          
+
           <div className="buttons">
-            <button 
-              onClick={findRoute} 
+            <button
+              onClick={findRoute}
               disabled={!start || !end || loading || debugLoading}
               className="btn-primary"
             >
               {loading ? 'Calculating...' : 'Find Route'}
             </button>
-            
-            <button 
-              onClick={debugRoute} 
+
+            <button
+              onClick={debugRoute}
               disabled={!start || !end || loading || debugLoading}
               className="btn-debug"
             >
               {debugLoading ? 'Debug Calculating...' : 'Debug Route'}
             </button>
-            
+
             <button onClick={reset} className="btn-secondary">
               Reset
             </button>
           </div>
-          
+
           {route && (
             <div className="route-info">
               <h3>Route Information</h3>
@@ -422,15 +469,15 @@ function App() {
                 <li>Waypoints: {route.path.length}</li>
                 {routeTime && <li>Calculation time: {routeTime.toFixed(1)}s</li>}
               </ul>
-              <button 
-                onClick={exportGPX} 
+              <button
+                onClick={exportGPX}
                 className="btn-export"
                 title="Download route as GPX file"
               >
                 Export GPX
               </button>
-              <button 
-                onClick={() => setShowCostSurface(!showCostSurface)} 
+              <button
+                onClick={() => setShowCostSurface(!showCostSurface)}
                 className="btn-cost-surface"
                 title="Explore cost surface visualization"
               >
@@ -439,9 +486,9 @@ function App() {
             </div>
           )}
         </div>
-        
+
         <div className="map-wrapper">
-          <Map 
+          <Map
             start={start || undefined}
             end={end || undefined}
             path={route?.path}
@@ -459,18 +506,18 @@ function App() {
           />
           <SearchBox onLocationSelect={handleLocationSelect} />
           {showPrepopulate && mapRef.current && (
-            <PrepopulateArea 
-              map={mapRef.current} 
-              onClose={() => setShowPrepopulate(false)} 
+            <PrepopulateArea
+              map={mapRef.current}
+              onClose={() => setShowPrepopulate(false)}
             />
           )}
         </div>
       </main>
-      
+
       {showDebug && (
-        <AlgorithmDebug 
-          debugData={debugData} 
-          onClose={() => setShowDebug(false)} 
+        <AlgorithmDebug
+          debugData={debugData}
+          onClose={() => setShowDebug(false)}
         />
       )}
     </div>

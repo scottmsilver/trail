@@ -15,12 +15,13 @@ import os
 import threading
 from typing import List, Optional, Tuple
 
+from rasterio.transform import Affine, from_bounds
+
 from app.engine_v2.elevation import Bounds, TwoLayerElevationLibrary
 from app.engine_v2.elevation_fd_safe import FDManagedElevationLibrary
 from app.engine_v2.path_layer import PathLayer, PathType
 from app.engine_v2.pathfinder import TerrainAwarePathfinder
 from app.models.route import Coordinate
-from rasterio.transform import Affine, from_bounds
 
 logger = logging.getLogger(__name__)
 
