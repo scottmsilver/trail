@@ -29,6 +29,9 @@ function App() {
   const [costSurfaceBounds, setCostSurfaceBounds] = useState<{north: number, south: number, east: number, west: number} | null>(null)
   const [costPointMode, setCostPointMode] = useState(false)
   const [cacheProgress, setCacheProgress] = useState<{active: boolean, message: string} | null>(null)
+  // Overlay the engine's trail/path network for the current viewport.
+  const [showTrails, setShowTrails] = useState(false)
+  const [trailCount, setTrailCount] = useState<number | null>(null)
   const mapRef = useRef<L.Map | null>(null)
 
   const {
@@ -433,6 +436,18 @@ function App() {
             </button>
           </div>
 
+          <label className="trails-toggle">
+            <input
+              type="checkbox"
+              checked={showTrails}
+              onChange={(e) => setShowTrails(e.target.checked)}
+            />
+            Show trails the engine uses
+            {showTrails && trailCount != null && (
+              <span className="eval-trail-count"> ({trailCount} in view)</span>
+            )}
+          </label>
+
           <div className="status">{status || 'Click on the map to set start point.'}</div>
 
           {cacheProgress && (
@@ -545,6 +560,8 @@ function App() {
             }}
             costSurfaceBounds={costSurfaceBounds || undefined}
             costPointMode={costPointMode}
+            showTrails={showTrails}
+            onTrailCount={setTrailCount}
           />
           <SearchBox onLocationSelect={handleLocationSelect} />
           {showPrepopulate && mapRef.current && (

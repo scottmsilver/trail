@@ -42,6 +42,26 @@ test('saves current setup as a case with a slugged id', async () => {
   expect(payload.labels).toEqual([])
 })
 
+test('warns when saving without a drawn path, confirms when one is present', () => {
+  const { rerender } = render(
+    <CasesPanel current={{ ...current, referencePath: [] }} onLoad={() => {}} />,
+  )
+  expect(screen.getByText(/No drawn path yet/i)).toBeTruthy()
+  rerender(<CasesPanel current={current} onLoad={() => {}} />)
+  expect(screen.getByText(/Will include your drawn path \(2 points\)/i)).toBeTruthy()
+})
+
+test('flags saved cases that have no reference path', async () => {
+  listCases.mockResolvedValue([
+    { id: 'p', name: 'HasPath', notes: '', start: current.start, end: current.end, options: current.options, referencePath: [{ lat: 1, lon: 2 }, { lat: 3, lon: 4 }], labels: [] },
+    { id: 'e', name: 'Empty', notes: '', start: current.start, end: current.end, options: current.options, referencePath: [], labels: [] },
+  ])
+  render(<CasesPanel current={current} onLoad={() => {}} />)
+  await screen.findByText('HasPath')
+  expect(screen.getByText('2 pts')).toBeTruthy()
+  expect(screen.getByText('no path')).toBeTruthy()
+})
+
 test('lists cases and appends a label on verdict click', async () => {
   const existing = {
     id: 'c1', name: 'Case 1', notes: '', start: current.start, end: current.end,

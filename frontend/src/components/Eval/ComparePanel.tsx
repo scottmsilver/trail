@@ -1,5 +1,6 @@
 import React from 'react'
 import type { ScoredPath } from '../../services/evalApi'
+import { formatCost, isImpassable } from '../../services/evalApi'
 import './ComparePanel.css'
 
 interface ComparePanelProps {
@@ -15,13 +16,22 @@ const fmt = (n: number) => n.toLocaleString('en-US')
 const ComparePanel: React.FC<ComparePanelProps> = ({ optimal, drawn }) => {
   const km = (p: ScoredPath | null) => (p ? `${(p.distanceM / 1000).toFixed(2)} km` : '—')
   const gain = (p: ScoredPath | null) => (p ? `${fmt(Math.round(p.elevationGainM))} m` : '—')
-  const cost = (p: ScoredPath | null) => (p ? fmt(Math.round(p.totalCost)) : '—')
+  const cost = (p: ScoredPath | null) => (p ? formatCost(p.totalCost) : '—')
 
+  // Percent difference only makes sense when both paths are passable.
   let pctLabel = '—'
-  if (optimal && drawn && optimal.totalCost !== 0) {
-    const pct = ((drawn.totalCost - optimal.totalCost) / optimal.totalCost) * 100
-    const rounded = Math.round(pct)
-    pctLabel = `${rounded >= 0 ? '+' : ''}${rounded}%`
+  let diffText = ''
+  if (optimal && drawn) {
+    if (isImpassable(drawn.totalCost) && !isImpassable(optimal.totalCost)) {
+      diffText = 'your path is impassable'
+    } else if (!isImpassable(drawn.totalCost) && optimal.totalCost !== 0 && !isImpassable(optimal.totalCost)) {
+      const pct = ((drawn.totalCost - optimal.totalCost) / optimal.totalCost) * 100
+      const rounded = Math.round(pct)
+      pctLabel = `${rounded >= 0 ? '+' : ''}${rounded}%`
+      diffText = `${pctLabel} vs optimal`
+    } else {
+      diffText = 'not comparable'
+    }
   }
 
   const rows: Array<{ label: string; opt: string; drw: string }> = [
@@ -46,10 +56,8 @@ const ComparePanel: React.FC<ComparePanelProps> = ({ optimal, drawn }) => {
       ))}
       <div className="compare-diff">
         {optimal && drawn ? (
-          <span
-            className={`compare-diff-value ${pctLabel.startsWith('+') ? 'worse' : 'better'}`}
-          >
-            {pctLabel} vs optimal
+          <span className={`compare-diff-value ${pctLabel.startsWith('+') ? 'worse' : 'better'}`}>
+            {diffText}
           </span>
         ) : (
           <span className="compare-diff-placeholder">Run a route</span>

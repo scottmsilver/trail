@@ -50,6 +50,8 @@ export default function CasesPanel({ current, onLoad }: CasesPanelProps) {
   }, [])
 
   const canSave = name.trim() !== '' && current.start != null && current.end != null
+  // A case is only useful for regression if it captured the drawn candidate.
+  const hasPath = current.referencePath.length >= 2
 
   const handleSave = async () => {
     if (!canSave || !current.start || !current.end) return
@@ -114,6 +116,11 @@ export default function CasesPanel({ current, onLoad }: CasesPanelProps) {
         <button className="cases-btn" onClick={handleSave} disabled={!canSave}>
           Save current
         </button>
+        <div className={`cases-save-hint ${hasPath ? 'cases-save-hint-ok' : 'cases-save-hint-warn'}`}>
+          {hasPath
+            ? `✓ Will include your drawn path (${current.referencePath.length} points)`
+            : 'No drawn path yet — will save start/end + weights only. Draw a path and finish it (Enter or double-click) to capture it.'}
+        </div>
       </div>
 
       {error && <div className="cases-error">{error}</div>}
@@ -125,6 +132,9 @@ export default function CasesPanel({ current, onLoad }: CasesPanelProps) {
             <li key={c.id} className="cases-item" data-testid="cases-item">
               <div className="cases-item-head">
                 <span className="cases-name">{c.name}</span>
+                <span className={`cases-pathflag ${c.referencePath.length >= 2 ? '' : 'cases-pathflag-empty'}`}>
+                  {c.referencePath.length >= 2 ? `${c.referencePath.length} pts` : 'no path'}
+                </span>
                 {last && <span className={`cases-verdict cases-verdict-${last.verdict}`}>{last.verdict}</span>}
               </div>
               <div className="cases-item-actions">

@@ -6,9 +6,11 @@ import 'leaflet/dist/leaflet.css'
 import './EvalPage.css'
 import api from '../../services/api'
 import type { Coordinate, RouteOptions } from '../../services/api'
-import { scorePath } from '../../services/evalApi'
+import { scorePath, formatCost, isImpassable } from '../../services/evalApi'
+import { parseGpx, downsamplePath, chooseGpxComparison } from '../../services/gpx'
 import type { ScoredPath, EvalCase } from '../../services/evalApi'
 import DrawLayer from './DrawLayer'
+import TrailsLayer from '../TrailsLayer'
 import CalibrationToolbar from '../CalibrationToolbar/CalibrationToolbar'
 import ComparePanel from './ComparePanel'
 import AttributionPanel from './AttributionPanel'
@@ -60,6 +62,9 @@ export default function EvalPage() {
   // "Go via this trail": snap the drawn candidate onto nearby trails before
   // scoring. Default on (per design); degrades to exact-drawn where no trail.
   const [snap, setSnap] = useState<'none' | 'trail'>('trail')
+  // Overlay the engine's trail/path network for the current viewport.
+  const [showTrails, setShowTrails] = useState(false)
+  const [trailCount, setTrailCount] = useState<number | null>(null)
 
   // Latest values for the debounced calibration effect to read without
   // re-triggering itself (it must fire on `options` change only).
@@ -67,6 +72,10 @@ export default function EvalPage() {
   const endRef = useRef(end)
   const drawnRef = useRef(drawn)
   const snapRef = useRef(snap)
+  // The snap mode the CURRENT drawn/reference path was scored with. A GPX is a
+  // real recording, scored as-walked ('none'), and must stay that way when
+  // calibration re-scores it — not flip to the UI snap toggle.
+  const drawnSnapRef = useRef<'none' | 'trail'>(snap)
   const ranOnceRef = useRef(false)
   startRef.current = start
   endRef.current = end
@@ -115,7 +124,7 @@ export default function EvalPage() {
       const scored = await scorePath(path, opts)
       setOptimal(scored)
       ranOnceRef.current = true
-      setStatus(`Optimal scored (cost ${Math.round(scored.totalCost)}).`)
+      setStatus(`Optimal scored (cost ${formatCost(scored.totalCost)}).`)
     } catch (err) {
       setStatus('Error: ' + (err as Error).message)
     } finally {
@@ -128,9 +137,49 @@ export default function EvalPage() {
     const d = drawnRef.current
     if (!d || d.path.length < 2) return
     try {
-      setDrawn(await scorePath(d.path, opts, snapRef.current))
+      // Re-score with the SAME snap mode this path was imported/drawn with, so a
+      // GPX stays as-walked across calibration changes.
+      setDrawn(await scorePath(d.path, opts, drawnSnapRef.current))
     } catch (err) {
       setStatus('Error scoring drawn path: ' + (err as Error).message)
+    }
+  }
+
+  const gpxInputRef = useRef<HTMLInputElement>(null)
+
+  /** Load a GPX the user walked as the reference track: its endpoints become
+   *  start/end, the track becomes the candidate (scored AS-WALKED — no snapping,
+   *  it's a real recording), then run the engine's optimal for the same
+   *  endpoints so both show side-by-side. */
+  const handleGpxFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = '' // let the same file be re-loaded later
+    if (!file) return
+    const MAX_GPX_BYTES = 20 * 1024 * 1024
+    if (file.size > MAX_GPX_BYTES) {
+      setStatus(`GPX too large (${(file.size / 1e6).toFixed(1)} MB, max 20 MB)`)
+      return
+    }
+    setStatus(`Loading ${file.name}…`)
+    try {
+      // Loops have no meaningful start→end optimal, so compare the outbound leg
+      // to its high point (see chooseGpxComparison).
+      const { start: s, end: en, track, note } = chooseGpxComparison(parseGpx(await file.text()))
+      const pts = downsamplePath(track, 1500)
+      setStart(s)
+      setEnd(en)
+      startRef.current = s
+      endRef.current = en
+      setStatus(note ? `${note} Scoring your track…` : `Scoring your GPX track (${pts.length} pts)…`)
+      // A GPX is a real recording: score it exactly as walked, no snapping.
+      drawnSnapRef.current = 'none'
+      const scored = await scorePath(pts, options, 'none')
+      setDrawn(scored)
+      drawnRef.current = scored
+      await runOptimal(options)
+      setStatus(`Loaded "${file.name}"${note ? ` — ${note}` : ''} Your track vs the engine's optimal.`)
+    } catch (err) {
+      setStatus('GPX load failed: ' + (err as Error).message)
     }
   }
 
@@ -142,9 +191,10 @@ export default function EvalPage() {
     }
     setStatus('Scoring drawn path…')
     try {
+      drawnSnapRef.current = snapRef.current
       const scored = await scorePath(points, options, snapRef.current)
       setDrawn(scored)
-      setStatus(`Drawn path scored (cost ${Math.round(scored.totalCost)}).`)
+      setStatus(`Drawn path scored (cost ${formatCost(scored.totalCost)}).`)
     } catch (err) {
       setStatus('Error scoring drawn path: ' + (err as Error).message)
     }
@@ -175,6 +225,7 @@ export default function EvalPage() {
     setStatus(`Loaded "${c.name}".`)
     if (c.referencePath.length >= 2) {
       try {
+        drawnSnapRef.current = snapRef.current
         const scored = await scorePath(c.referencePath, c.options, snapRef.current)
         setDrawn(scored)
         drawnRef.current = scored
@@ -202,12 +253,16 @@ export default function EvalPage() {
   // Verdict for the what-if loop.
   let verdict: { text: string; win: boolean } | null = null
   if (optimal && drawn) {
-    const win = drawn.totalCost <= optimal.totalCost
-    verdict = {
-      win,
-      text: win
-        ? `Engine would prefer yours (${Math.round(drawn.totalCost)} ≤ ${Math.round(optimal.totalCost)})`
-        : `Engine still prefers optimal (${Math.round(optimal.totalCost)} < ${Math.round(drawn.totalCost)})`,
+    if (isImpassable(drawn.totalCost)) {
+      verdict = { win: false, text: 'Your path is impassable (crosses terrain over the max slope)' }
+    } else {
+      const win = drawn.totalCost <= optimal.totalCost
+      verdict = {
+        win,
+        text: win
+          ? `Engine would prefer yours (${formatCost(drawn.totalCost)} ≤ ${formatCost(optimal.totalCost)})`
+          : `Engine still prefers optimal (${formatCost(optimal.totalCost)} < ${formatCost(drawn.totalCost)})`,
+      }
     }
   }
 
@@ -222,6 +277,7 @@ export default function EvalPage() {
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           />
 
+          <TrailsLayer active={showTrails} onCount={setTrailCount} />
           <EvalClickHandler disabled={drawing} onClick={handleMapClick} />
           <DrawLayer active={drawing} onFinish={handleDrawFinish} />
 
@@ -304,6 +360,16 @@ export default function EvalPage() {
           >
             {drawing ? 'Drawing… (finish)' : 'Draw path'}
           </button>
+          <button className="eval-btn" onClick={() => gpxInputRef.current?.click()}>
+            Load GPX
+          </button>
+          <input
+            ref={gpxInputRef}
+            type="file"
+            accept=".gpx,application/gpx+xml,application/xml"
+            style={{ display: 'none' }}
+            onChange={handleGpxFile}
+          />
           <button className="eval-btn" onClick={clear}>
             Clear
           </button>
@@ -316,6 +382,18 @@ export default function EvalPage() {
             onChange={(e) => setSnap(e.target.checked ? 'trail' : 'none')}
           />
           Snap drawn path to trails
+        </label>
+
+        <label className="eval-snap-toggle">
+          <input
+            type="checkbox"
+            checked={showTrails}
+            onChange={(e) => setShowTrails(e.target.checked)}
+          />
+          Show trails the engine uses
+          {showTrails && trailCount != null && (
+            <span className="eval-trail-count"> ({trailCount} in view)</span>
+          )}
         </label>
 
         <div className="eval-status">{status || 'Click the map to set start, then end.'}</div>

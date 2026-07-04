@@ -9,6 +9,22 @@ export interface ScoredSegment {
   dominantFactor: string
 }
 
+// The backend maps an impassable move (slope over the max) to a large finite
+// sentinel so the JSON stays valid (scoring.py `_IMPASSABLE`). We detect it at
+// half the sentinel: comfortably above any real passable cost — which, even with
+// unbounded customPathCosts or a heavy deviation penalty, stays many orders of
+// magnitude below 1e18 — yet below the sentinel (a total with any impassable
+// segment is >= 1e18). Tied to the sentinel value, not an arbitrary cutoff.
+export const IMPASSABLE_SENTINEL = 1e18
+export function isImpassable(cost: number): boolean {
+  return cost >= IMPASSABLE_SENTINEL / 2
+}
+
+/** Human-readable cost: "impassable" for the sentinel, else a rounded, grouped number. */
+export function formatCost(cost: number): string {
+  return isImpassable(cost) ? 'impassable' : Math.round(cost).toLocaleString('en-US')
+}
+
 export interface ScoredPath {
   path: Coordinate[]
   snapped: boolean
@@ -46,6 +62,30 @@ export async function scorePath(
     body: JSON.stringify({ path, options, snap }),
   })
   if (!r.ok) throw new Error(`score-path ${r.status}`)
+  return r.json()
+}
+
+export interface TrailLines {
+  lines: [number, number][][]
+  count: number
+}
+
+/** Fetch the trail/path geometry the engine routes on (cached OSM highway=*
+ *  ways) within a map viewport, for a display overlay. */
+export async function getTrails(b: {
+  south: number
+  west: number
+  north: number
+  east: number
+}): Promise<TrailLines> {
+  const q = new URLSearchParams({
+    south: String(b.south),
+    west: String(b.west),
+    north: String(b.north),
+    east: String(b.east),
+  })
+  const r = await fetch(`${API_BASE}/api/eval/trails?${q}`)
+  if (!r.ok) throw new Error(`trails ${r.status}`)
   return r.json()
 }
 

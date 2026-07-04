@@ -80,3 +80,38 @@ def snap_polyline_to_lines(
         else:
             snapped.append(pt)
     return snapped, did
+
+
+def densify_polyline(path: List[Coordinate], step_m: float, max_points: int) -> List[Coordinate]:
+    """Insert interpolated vertices so consecutive points are ~``step_m`` apart.
+
+    Per-vertex snapping only moves the points you clicked; between clicks the
+    line stays straight. Densifying first means the whole line gets pulled onto
+    a trail (each interpolated point snaps), so a sparse hand-drawn path visibly
+    hugs the trail instead of only nudging its endpoints. Original vertices are
+    always kept. For very long paths the step is coarsened so the output stays
+    near ``max_points`` (bounding downstream scoring work)."""
+    if len(path) < 2:
+        return list(path)
+    lat0 = max(-89.9, min(89.9, path[0].lat))
+    xy = [_to_xy(p.lat, p.lon, lat0) for p in path]
+    seg_len = [math.hypot(xy[i + 1][0] - xy[i][0], xy[i + 1][1] - xy[i][1]) for i in range(len(xy) - 1)]
+    total = sum(seg_len)
+    if total == 0:
+        return list(path)
+    # Coarsen the step if a fine one would blow past max_points.
+    eff_step = max(step_m, total / max(1, max_points - len(path)))
+    out: List[Coordinate] = [path[0]]
+    for i in range(len(path) - 1):
+        (ax, ay), (bx, by) = xy[i], xy[i + 1]
+        d = seg_len[i]
+        n = int(d // eff_step) if d > 0 else 0
+        for k in range(1, n + 1):
+            t = (k * eff_step) / d
+            if t >= 1.0:
+                break
+            x, y = ax + (bx - ax) * t, ay + (by - ay) * t
+            lat, lon = _to_latlon(x, y, lat0)
+            out.append(Coordinate(lat=lat, lon=lon))
+        out.append(path[i + 1])
+    return out

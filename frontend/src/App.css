@@ -400,6 +400,16 @@ button {
   position: relative;
 }
 
+.trails-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  margin: 6px 0;
+  cursor: pointer;
+}
+.eval-trail-count { color: #15803d; font-size: 0.78rem; }
+
 @media (max-width: 768px) {
   .app-main {
     flex-direction: column;

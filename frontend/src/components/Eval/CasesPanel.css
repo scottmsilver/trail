@@ -78,3 +78,16 @@
   font-size: 0.8rem;
   margin-bottom: 6px;
 }
+.cases-save-hint {
+  font-size: 0.75rem;
+  margin-top: 4px;
+  line-height: 1.3;
+}
+.cases-save-hint-ok { color: #166534; }
+.cases-save-hint-warn { color: #92400e; }
+.cases-pathflag {
+  font-size: 0.7rem;
+  color: #475569;
+  margin-left: 6px;
+}
+.cases-pathflag-empty { color: #b45309; }

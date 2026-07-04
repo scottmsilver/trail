@@ -1,5 +1,6 @@
 import React from 'react'
 import type { ScoredPath } from '../../services/evalApi'
+import { formatCost } from '../../services/evalApi'
 import './AttributionPanel.css'
 
 interface AttributionPanelProps {
@@ -51,7 +52,7 @@ const AttributionPanel: React.FC<AttributionPanelProps> = ({ scored, onHoverSegm
               </div>
               <span className="segment-dominant">{seg.dominantFactor}</span>
             </div>
-            <span className="segment-cost">{Math.round(seg.cost).toLocaleString('en-US')}</span>
+            <span className="segment-cost">{formatCost(seg.cost)}</span>
           </div>
         )
       })}

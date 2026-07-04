@@ -742,6 +742,21 @@ async def score_path_endpoint(request: ScorePathRequest):
         raise HTTPException(status_code=500, detail="internal error scoring path")
 
 
+@app.get("/api/eval/trails")
+async def eval_trails_endpoint(south: float, west: float, north: float, east: float):
+    """Trail/path geometry the engine routes on (OSM highway=* ways) within a
+    viewport, for a display overlay. Returns lists of [lat, lon] polylines from
+    the cached OSM tiles; empty where nothing is cached."""
+    try:
+        lines = await trail_finder_v2.trail_lines_in_bounds(south, west, north, east)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error loading trails: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="internal error loading trails")
+    return {"lines": lines, "count": len(lines)}
+
+
 @app.get("/api/eval/cases", response_model=list[EvalCase])
 async def list_eval_cases():
     """List all saved eval cases, sorted by id."""

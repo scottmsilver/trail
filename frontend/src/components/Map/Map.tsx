@@ -5,6 +5,7 @@ import type { LatLngExpression } from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import './Map.css'
 import SlopeOverlay from '../SlopeOverlay/SlopeOverlay'
+import TrailsLayer from '../TrailsLayer'
 import PathWithSlopes from '../PathWithSlopes/PathWithSlopes'
 import CostSurfaceExplorer from '../CostSurfaceExplorer/CostSurfaceExplorer'
 import CostPointExplorer from '../CostPointExplorer/CostPointExplorer'
@@ -39,6 +40,8 @@ interface MapProps {
   onCloseCostSurface?: () => void
   costSurfaceBounds?: {north: number, south: number, east: number, west: number}
   costPointMode?: boolean
+  showTrails?: boolean
+  onTrailCount?: (n: number | null) => void
 }
 
 function MapClickHandler({ onMapClick }: { onMapClick?: (coord: Coordinate) => void }) {
@@ -106,7 +109,7 @@ function MapReadyHandler({ onMapReady }: { onMapReady?: (map: L.Map) => void }) 
   return null;
 }
 
-export default function Map({ start, end, path, pathWithSlopes, center, onMapClick, onMapReady, showCostSurface, onCloseCostSurface, costSurfaceBounds, costPointMode }: MapProps) {
+export default function Map({ start, end, path, pathWithSlopes, center, onMapClick, onMapReady, showCostSurface, onCloseCostSurface, costSurfaceBounds, costPointMode, showTrails, onTrailCount }: MapProps) {
   // Default center (Utah area)
   const defaultCenter: LatLngExpression = [40.640, -111.570]
   const zoom = 13
@@ -181,6 +184,10 @@ export default function Map({ start, end, path, pathWithSlopes, center, onMapCli
 
       <SlopeOverlay enabled={showSlopes} />
       <TerrainSlopesController setShowSlopes={setShowSlopes} />
+
+      {/* Trail network the engine routes on — drawn early so it sits beneath
+          markers and the computed route. */}
+      <TrailsLayer active={showTrails || false} onCount={onTrailCount || (() => {})} />
 
       {start && (
         <Marker position={[start.lat, start.lon]}>

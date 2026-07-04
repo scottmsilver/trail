@@ -351,13 +351,17 @@ class PathLayer:
 
         return rasterize_features(_concat_features(paths), _concat_features(obstacles), shape, transform)
 
-    def get_trail_lines(self, bounds) -> List[List[Tuple[float, float]]]:
+    def get_trail_lines(self, bounds, cached_only: bool = False) -> List[List[Tuple[float, float]]]:
         """Return path/trail geometries in ``bounds`` as lists of (lat, lon)
         points, for snapping a drawn polyline. Reuses the same fixed-tile cache
-        as get_grid; degrades to [] on an OSM outage (no snapping, not a crash)."""
+        as get_grid; degrades to [] on an OSM outage (no snapping, not a crash).
+
+        With ``cached_only=True`` (a passive display overlay), never fetch on a
+        cache miss -- just return whatever tiles are already cached. This keeps
+        an untrusted, high-frequency endpoint from driving Overpass load."""
         tiles = self._tile_indices(bounds)
         missing = [(ti, tj) for ti, tj in tiles if not os.path.exists(self._tile_cache(ti, tj))]
-        if missing:
+        if missing and not cached_only:
             self._fetch_and_cache_tiles(missing)
 
         lines: List[List[Tuple[float, float]]] = []

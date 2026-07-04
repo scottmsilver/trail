@@ -22,7 +22,7 @@ from app.engine_v2.elevation_fd_safe import FDManagedElevationLibrary
 from app.engine_v2.path_layer import PathLayer, PathType
 from app.engine_v2.pathfinder import TerrainAwarePathfinder
 from app.engine_v2.scoring import dominant_factor, rasterize_segment, score_polyline_cells
-from app.engine_v2.snapping import snap_polyline_to_lines
+from app.engine_v2.snapping import densify_polyline, snap_polyline_to_lines
 from app.models.eval import ScoredPath, ScoredSegment
 from app.models.route import Coordinate
 
@@ -32,6 +32,36 @@ logger = logging.getLogger(__name__)
 # Upper bound on drawn-path vertices, to cap the O(vertices) scoring/snapping
 # work an eval request can trigger.
 MAX_PATH_POINTS = 2000
+
+# Raw per-axis degree span a scored/snapped path may cover. Backstops the
+# haversine extent check, which is fooled by antimeridian-straddling paths
+# (short-way distance is tiny but the raw min/max bbox spans ~360deg). Set
+# comfortably above any legitimate <=50 km path (~0.45deg lat / ~0.6deg lon).
+MAX_SCORE_SPAN_DEG = 1.0
+
+# Scoring/snapping only need DEM+terrain covering the drawn polyline plus a
+# small margin — NOT the routing exploration buffer (~0.02deg), which loads a
+# far larger area (and, on an OSM cache miss, many more Overpass fetches). A
+# tight margin keeps eval interactions fast.
+SCORE_BUFFER_DEG = 0.003
+# A caller-supplied buffer expands the scored bbox AFTER _validate_path_extent(),
+# so cap it: otherwise a small (validated) path with buffer=0.5 loads a far larger
+# DEM/grid/OSM area — a resource-amplification bypass of the extent guard.
+MAX_SCORE_BUFFER_DEG = 0.05
+
+# Cap the viewport a trails-overlay request may span, bounding tile-index work.
+MAX_TRAILS_SPAN_DEG = 1.0
+# Hard ceiling on tiles a trails-overlay request may touch, independent of the
+# degree span (guards against a small OSM_TILE_DEG blowing up the tile list).
+MAX_TRAILS_TILES = 4000
+
+# "Snap drawn path to trails" tuning. Hand-drawing on a zoomed map is imprecise,
+# so the catch radius is generous (SNAP_THRESHOLD_M). The drawn line is first
+# densified to ~SNAP_DENSIFY_STEP_M spacing so the WHOLE line snaps onto a trail
+# (not just the clicked vertices), capped at SNAP_MAX_POINTS to bound scoring.
+SNAP_THRESHOLD_M = 60.0
+SNAP_DENSIFY_STEP_M = 15.0
+SNAP_MAX_POINTS = 1500
 
 
 class TrailFinderServiceV2:
@@ -225,21 +255,58 @@ class TrailFinderServiceV2:
         """Score an arbitrary polyline with the engine's cost function (async)."""
         return await asyncio.to_thread(self._score_path_sync, path, options)
 
-    async def snap_to_trails(self, path: List[Coordinate], options: dict, threshold_m: float = 25.0):
+    async def snap_to_trails(self, path: List[Coordinate], options: dict, threshold_m: float = SNAP_THRESHOLD_M):
         """Snap a drawn polyline onto nearby OSM trail geometry.
 
-        Returns ``(snapped_path, did_snap)``. On an OSM outage no lines are
-        available and the path is returned unchanged (did_snap=False).
+        The drawn line is densified first so the WHOLE line snaps onto a trail,
+        not just the vertices the user clicked (see densify_polyline). Returns
+        ``(snapped_path, did_snap)``. On an OSM outage no lines are available and
+        the (still densified) path is returned unchanged (did_snap=False).
         """
         lines = await asyncio.to_thread(self._trail_lines_sync, path, options)
-        return snap_polyline_to_lines(path, lines, threshold_m)
+        dense = densify_polyline(path, SNAP_DENSIFY_STEP_M, SNAP_MAX_POINTS)
+        return snap_polyline_to_lines(dense, lines, threshold_m)
+
+    async def trail_lines_in_bounds(self, south: float, west: float, north: float, east: float):
+        """Trail/path geometry (the OSM highway=* ways the engine routes on)
+        within a viewport, as lists of (lat, lon) points — for a display
+        overlay. Reads the fixed-tile OSM cache and returns [] for areas with no
+        cached tiles; under OSM_DISABLE it does not fetch, so it never stalls."""
+        if not all(math.isfinite(v) for v in (south, west, north, east)):
+            raise ValueError("bounds must be finite")
+        if not (-90 <= south < north <= 90 and -180 <= west < east <= 180):
+            raise ValueError("invalid bounds: need -90<=south<north<=90 and -180<=west<east<=180")
+        if (north - south) > MAX_TRAILS_SPAN_DEG or (east - west) > MAX_TRAILS_SPAN_DEG:
+            raise ValueError(f"viewport too large (max {MAX_TRAILS_SPAN_DEG} deg per side)")
+        # Belt-and-suspenders vs. a small OSM_TILE_DEG: bound the tile count too.
+        deg = getattr(self.path_layer, "tile_deg", 0.02)
+        approx_tiles = ((north - south) / deg + 1) * ((east - west) / deg + 1)
+        if approx_tiles > MAX_TRAILS_TILES:
+            raise ValueError("viewport spans too many tiles")
+        return await asyncio.to_thread(self._trail_lines_bounds_sync, south, west, north, east)
+
+    def _trail_lines_bounds_sync(self, south: float, west: float, north: float, east: float):
+        bounds = Bounds(south=south, west=west, north=north, east=east)
+        with self._data_lock:
+            # Passive overlay: read cached tiles only, never drive an OSM fetch.
+            return self.path_layer.get_trail_lines(bounds, cached_only=True)
 
     def _trail_lines_sync(self, path: List[Coordinate], options: dict):
         options = options or {}
         sw, ne = self._validate_path_extent(path)
-        bounds = self.calculate_bounding_box(sw, ne, options.get("buffer"))
+        bounds = self.calculate_bounding_box(sw, ne, self._score_buffer(options))
         with self._data_lock:
             return self.path_layer.get_trail_lines(bounds)
+
+    @staticmethod
+    def _score_buffer(options: dict) -> float:
+        """Buffer (deg) for scoring/snapping bounds: honor an explicit
+        options['buffer'] if given (tests/advanced callers), else the tight
+        default that keeps eval interactions fast."""
+        b = options.get("buffer")
+        b = SCORE_BUFFER_DEG if b is None else b
+        # Clamp to [0, MAX] so a crafted buffer can't amplify the scored area.
+        return min(max(b, 0.0), MAX_SCORE_BUFFER_DEG)
 
     def _validate_path_extent(self, path: List[Coordinate]):
         """Reject degenerate/oversized polylines before we allocate a grid for
@@ -250,6 +317,13 @@ class TrailFinderServiceV2:
             raise ValueError(f"path has too many points ({len(path)} > {MAX_PATH_POINTS})")
         sw = Coordinate(lat=min(p.lat for p in path), lon=min(p.lon for p in path))
         ne = Coordinate(lat=max(p.lat for p in path), lon=max(p.lon for p in path))
+        # Raw degree-span cap FIRST: the haversine below takes the short way
+        # around the globe, so an antimeridian-straddling pair (e.g. lon -179.9
+        # and 179.9) reads as a few km yet spans ~360deg of raw min/max lon —
+        # which is what actually sizes the grid/tile enumeration. Reject that
+        # before it becomes a giant bounding box.
+        if (ne.lat - sw.lat) > MAX_SCORE_SPAN_DEG or (ne.lon - sw.lon) > MAX_SCORE_SPAN_DEG:
+            raise ValueError(f"path spans too many degrees (max {MAX_SCORE_SPAN_DEG} per axis)")
         span_km = self._haversine_km(sw, ne)
         if span_km > self.max_distance_km:
             raise ValueError(f"path extent {span_km:.1f} km exceeds max {self.max_distance_km} km")
@@ -258,8 +332,8 @@ class TrailFinderServiceV2:
     def _score_path_sync(self, path: List[Coordinate], options: dict) -> ScoredPath:
         options = options or {}
         sw, ne = self._validate_path_extent(path)
-        # Bounding box covering the whole polyline (plus the usual buffer).
-        bounds = self.calculate_bounding_box(sw, ne, options.get("buffer"))
+        # Bounding box covering the whole polyline plus a small margin.
+        bounds = self.calculate_bounding_box(sw, ne, self._score_buffer(options))
         pf, _warnings = self._load_pathfinder(bounds, options)
 
         # Clamp vertices into the grid: a point on the bbox max edge truncates to
