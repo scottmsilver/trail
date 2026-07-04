@@ -83,5 +83,13 @@ and allows the `.oursilverfamily.com` Host header.
 ## Secrets
 
 `trail-cf.env` (the API token) lives outside the repo, `chmod 600`, and is
-git-ignored. The app itself is unauthenticated — Cloudflare Access is the only
-auth surface exposed publicly.
+git-ignored. The token is passed to `curl` via a mode-600 config file, so it
+never appears in process argv (`ps`). The app itself is unauthenticated —
+Cloudflare Access is the only auth surface exposed publicly.
+
+**Fail-closed exposure.** `trail-instance up` refuses to expose a host it can't
+gate: if no token is configured, or the Access app/policy can't be provisioned,
+it aborts (and tears down the started processes) rather than serving an ungated
+public URL. Set `TRAIL_ALLOW_UNGATED=1` to override for local-only testing.
+Instance names are restricted to `[a-z0-9-]` (start alphanumeric) so they can't
+inject into paths, hostnames, JSON, or the tunnel YAML.

@@ -66,6 +66,20 @@ _cf_env() {
   [[ -f "$f" ]] && source "$f"
 }
 
+# True when a Cloudflare API token is configured.
+cf_has_token() { _cf_env; [[ -n "${CLOUDFLARE_API_TOKEN:-}" ]]; }
+
+# curl to the Cloudflare API with the bearer token supplied via a mode-600
+# config file, so the token never appears in process argv (ps / /proc/*/cmdline).
+# printf is a bash builtin, so writing the file doesn't expose the token either.
+_cf_curl() {
+  _cf_env
+  local kf; kf=$(mktemp "${TMPDIR:-/tmp}/trailcf.XXXXXX"); chmod 600 "$kf"
+  printf 'header = "Authorization: Bearer %s"\n' "$CLOUDFLARE_API_TOKEN" > "$kf"
+  curl -s -K "$kf" "$@"; local rc=$?
+  rm -f "$kf"; return $rc
+}
+
 # Create the single-level DNS CNAME for a host (uses cloudflared cert.pem, not
 # the API token). Idempotent via --overwrite-dns.
 cf_route_dns() { # $1=host
@@ -73,36 +87,45 @@ cf_route_dns() { # $1=host
     && echo "dns: routed $1" || echo "dns: could not route $1 (check cert.pem)"
 }
 
-# Ensure a self-hosted Access app + allow-by-email policy exists for a host.
-# Idempotent (reuses an existing app for that exact domain). Echoes the app id,
-# or empty when no token is configured (instance then runs UNGATED).
+# Ensure a self-hosted Access app WITH an allow-by-email policy exists for a host.
+# Idempotent (reuses an existing app for that exact domain, and adds the policy if
+# missing). Echoes the app id ONLY when an allow policy is confirmed present;
+# echoes empty on no-token / creation failure / policy failure so callers fail
+# CLOSED (never expose an ungated host). All Cloudflare-bound values are passed to
+# Python via argv/env and JSON is built with json.dumps — never string-interpolated
+# into source or payloads.
 cf_access_ensure() { # $1=host
-  _cf_env
-  [[ -n "${CLOUDFLARE_API_TOKEN:-}" ]] || { echo ""; return 0; }
-  local host="$1" aid
-  aid=$(curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-    "$CF_API/accounts/$CF_ACCOUNT_ID/access/apps" \
-    | "$PY" -c "import sys,json
-apps=json.load(sys.stdin).get('result') or []
-print(next((a['id'] for a in apps if a.get('domain')=='$host'),''))")
+  cf_has_token || { echo ""; return 0; }
+  local host="$1" aid npol ok
+  aid=$(_cf_curl "$CF_API/accounts/$CF_ACCOUNT_ID/access/apps" \
+    | "$PY" -c 'import sys,json
+apps=json.load(sys.stdin).get("result") or []
+print(next((a["id"] for a in apps if a.get("domain")==sys.argv[1]),""))' "$host")
   if [[ -z "$aid" ]]; then
-    aid=$(curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H "Content-Type: application/json" \
-      -X POST "$CF_API/accounts/$CF_ACCOUNT_ID/access/apps" \
-      --data "{\"name\":\"trail-$host\",\"domain\":\"$host\",\"type\":\"self_hosted\",\"session_duration\":\"720h\",\"app_launcher_visible\":false}" \
-      | "$PY" -c 'import sys,json; print(json.load(sys.stdin)["result"]["id"])')
-    curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H "Content-Type: application/json" \
-      -X POST "$CF_API/accounts/$CF_ACCOUNT_ID/access/apps/$aid/policies" \
-      --data "{\"name\":\"only-scott\",\"decision\":\"allow\",\"include\":[{\"email\":{\"email\":\"$TRAIL_ACCESS_EMAIL\"}}]}" >/dev/null
+    aid=$(_cf_curl -H "Content-Type: application/json" -X POST \
+      "$CF_API/accounts/$CF_ACCOUNT_ID/access/apps" \
+      --data "$("$PY" -c 'import json,sys;print(json.dumps({"name":"trail-"+sys.argv[1],"domain":sys.argv[1],"type":"self_hosted","session_duration":"720h","app_launcher_visible":False}))' "$host")" \
+      | "$PY" -c 'import sys,json; print((json.load(sys.stdin).get("result") or {}).get("id",""))')
+    [[ -n "$aid" ]] || { echo ""; return 0; }   # app creation failed -> fail closed
+  fi
+  # Confirm an allow policy exists; create one if the app has none.
+  npol=$(_cf_curl "$CF_API/accounts/$CF_ACCOUNT_ID/access/apps/$aid/policies" \
+    | "$PY" -c 'import sys,json; print(len(json.load(sys.stdin).get("result") or []))')
+  if [[ "$npol" == "0" ]]; then
+    ok=$(_cf_curl -H "Content-Type: application/json" -X POST \
+      "$CF_API/accounts/$CF_ACCOUNT_ID/access/apps/$aid/policies" \
+      --data "$("$PY" -c 'import json,os;print(json.dumps({"name":"only-owner","decision":"allow","include":[{"email":{"email":os.environ["TRAIL_ACCESS_EMAIL"]}}]}))')" \
+      | "$PY" -c 'import sys,json; print("ok" if json.load(sys.stdin).get("success") else "")')
+    [[ "$ok" == "ok" ]] || { echo ""; return 0; }  # policy creation failed -> fail closed
   fi
   echo "$aid"
 }
 
 # Delete an Access app by id (best-effort).
 cf_access_delete() { # $1=app_id
-  _cf_env
-  [[ -n "${CLOUDFLARE_API_TOKEN:-}" && -n "${1:-}" ]] || return 0
-  curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-    -X DELETE "$CF_API/accounts/$CF_ACCOUNT_ID/access/apps/$1" >/dev/null
+  cf_has_token || return 0
+  [[ -n "${1:-}" ]] || return 0
+  _cf_curl -X DELETE "$CF_API/accounts/$CF_ACCOUNT_ID/access/apps/$1" >/dev/null
 }
 
 # Regenerate the tunnel ingress from the registry and (best-effort) reload.

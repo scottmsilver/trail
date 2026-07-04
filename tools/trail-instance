@@ -17,8 +17,21 @@ cmd="${1:-}"; name="${2:-}"
 
 up() {
   local name="$1"
+  # Validate the name before it becomes a path, hostname, JSON value and YAML
+  # ingress entry. Strict [a-z0-9-] prevents path traversal, and JSON/YAML/host
+  # injection downstream.
+  if ! [[ "$name" =~ ^[a-z0-9][a-z0-9-]{0,30}$ ]]; then
+    echo "invalid instance name '$name' — allowed: [a-z0-9-], start alphanumeric, <=31 chars"; return 1
+  fi
   local branch="${2:-worktree-$name}"
   local wt="$MAIN/.claude/worktrees/$name"
+
+  # Fail CLOSED: refuse to expose a public host we can't gate with Access.
+  if ! cf_has_token && [[ "${TRAIL_ALLOW_UNGATED:-}" != "1" ]]; then
+    echo "ERROR: no Cloudflare token (trail-cf.env) — refusing to expose '$name' ungated."
+    echo "       configure trail-cf.env, or set TRAIL_ALLOW_UNGATED=1 to override."; return 1
+  fi
+
   if [[ ! -d "$wt" ]]; then
     git -C "$MAIN" worktree add "$wt" -b "$branch" 2>/dev/null \
       || git -C "$MAIN" worktree add "$wt" "$branch"
@@ -48,8 +61,14 @@ up() {
   # Public plumbing: DNS record + per-host Access app (allow only your email).
   cf_route_dns "$host"
   local aid; aid="$(cf_access_ensure "$host")"
+  if [[ -z "$aid" && "${TRAIL_ALLOW_UNGATED:-}" != "1" ]]; then
+    echo "ERROR: could not gate $host with Access — NOT exposing it. Stopping instance."
+    kill "$(cat "/tmp/trail-$name.be" 2>/dev/null)" "$(cat "/tmp/trail-$name.fe" 2>/dev/null)" 2>/dev/null || true
+    rm -f "/tmp/trail-$name.be" "/tmp/trail-$name.fe"
+    return 1   # never reg_set / regen_ingress -> host was never added to the tunnel
+  fi
   [[ -n "$aid" ]] && echo "access: app $aid gates $host" \
-    || echo "access: WARNING no token -> $host is NOT gated (set trail-cf.env)"
+    || echo "access: WARNING exposing $host UNGATED (TRAIL_ALLOW_UNGATED=1)"
 
   reg_set "$name" "$(printf '{"branch":"%s","backend_port":%d,"frontend_port":%d,"hostname":"%s","access_app_id":"%s","be_pid":%s,"fe_pid":%s}' \
     "$branch" "$BP" "$FP" "$host" "$aid" "$(cat "/tmp/trail-$name.be")" "$(cat "/tmp/trail-$name.fe")")"

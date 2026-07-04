@@ -25,8 +25,12 @@ else
 fi
 
 # Verify the token is valid and can manage Access (fail fast otherwise).
-verify=$(curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+# Token goes via a mode-600 config file so it never lands in curl's argv (ps).
+kf=$(mktemp "${TMPDIR:-/tmp}/trailcf.XXXXXX"); chmod 600 "$kf"
+printf 'header = "Authorization: Bearer %s"\n' "$CLOUDFLARE_API_TOKEN" > "$kf"
+verify=$(curl -s -K "$kf" \
   "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/access/apps" \
   | grep -o '"success":[a-z]*' | head -1)
+rm -f "$kf"
 echo "access-api reachable: ${verify:-unknown}"
 echo "done. 'trail-instance up <name>' now handles per-instance DNS + Access."
