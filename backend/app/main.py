@@ -5,16 +5,16 @@ from datetime import datetime, timezone
 from typing import Dict
 
 import numpy as np
-from fastapi import BackgroundTasks, FastAPI, HTTPException, status
-from fastapi.middleware.cors import CORSMiddleware
-
 from app.engine_v2.service import TrailFinderServiceV2
-from app.models.eval import ScoredPath, ScorePathRequest
+from app.models.eval import EvalCase, ScoredPath, ScorePathRequest
 from app.models.route import RouteRequest, RouteResponse, RouteResult, RouteStatus, RouteStatusResponse
 from app.services.dem_tile_cache import DEMTileCache
+from app.services.eval_store import EvalStore
 from app.services.obstacle_config import ObstaclePresets
 from app.services.path_preferences import PathPreferencePresets, PathPreferences
 from app.services.trail_finder import TrailFinderService
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Response, status
+from fastapi.middleware.cors import CORSMiddleware
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -37,6 +37,10 @@ app.add_middleware(
 
 # In-memory storage for now (will be replaced with Redis)
 routes_storage: Dict[str, dict] = {}
+
+# File-backed store for saved eval cases. os.path.dirname(__file__) is
+# .../backend/app, so ../../evals is the repo-root `evals/` directory.
+eval_store = EvalStore(os.environ.get("EVAL_DIR") or os.path.join(os.path.dirname(__file__), "..", "..", "evals"))
 
 # Create shared DEM cache for all trail finder instances
 logger.info("Creating shared DEM caches...")
@@ -333,9 +337,8 @@ async def get_route(route_id: str):
 @app.get("/api/routes/{route_id}/gpx")
 async def download_gpx(route_id: str):
     """Download route as GPX file"""
-    from fastapi.responses import Response
-
     from app.services.gpx_generator import GPXGenerator
+    from fastapi.responses import Response
 
     if route_id not in routes_storage:
         raise HTTPException(status_code=404, detail="Route not found")
@@ -394,9 +397,8 @@ async def download_gpx(route_id: str):
 @app.post("/api/routes/export/gpx")
 async def export_route_as_gpx(request: RouteRequest):
     """Export a route directly as GPX without storing it"""
-    from fastapi.responses import Response
-
     from app.services.gpx_generator import GPXGenerator
+    from fastapi.responses import Response
 
     # Get configurations based on user profile and custom options
     profile = request.options.userProfile if request.options else "default"
@@ -720,6 +722,28 @@ async def score_path_endpoint(request: ScorePathRequest):
     except Exception as e:
         logger.error(f"Error scoring path: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/eval/cases", response_model=list[EvalCase])
+async def list_eval_cases():
+    """List all saved eval cases, sorted by id."""
+    return eval_store.list()
+
+
+@app.post("/api/eval/cases", response_model=EvalCase)
+async def save_eval_case(case: EvalCase):
+    """Create or replace a saved eval case (keyed by its id)."""
+    try:
+        return eval_store.save(case)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.delete("/api/eval/cases/{case_id}", status_code=204)
+async def delete_eval_case(case_id: str):
+    """Delete a saved eval case. Idempotent: 204 even if it did not exist."""
+    eval_store.delete(case_id)
+    return Response(status_code=204)
 
 
 @app.post("/api/terrain/cost-point")
