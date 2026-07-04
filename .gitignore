@@ -37,3 +37,6 @@ backend/path_cache_v2/
 # --- private / local config ---
 CLAUDE.local.md
 CLAUDE.local.md.template
+
+# --- multi-instance harness: local secrets / state (never commit) ---
+trail-cf.env
