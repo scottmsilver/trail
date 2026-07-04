@@ -12,6 +12,7 @@ frontend/node_modules/
 .env
 *.log
 
+.gstack/
 
 # Personal preset seed (contains real addresses) — keep out of git
 frontend/src/config/presets.local.json
