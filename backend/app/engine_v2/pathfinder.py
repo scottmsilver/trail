@@ -285,7 +285,6 @@ class TerrainAwarePathfinder:
         sqrt = math.sqrt
         push = heapq.heappush
         pop = heapq.heappop
-        INF = float("inf")
 
         # Native-Python views: nested-list indexing returns plain float/int
         # (no np.float64 boxing) and the values are bit-identical to arr[r, c].
@@ -315,9 +314,12 @@ class TerrainAwarePathfinder:
             terrain_type=terr[start_row][start_col],
         )
 
+        # closed_set / best_g_cost are keyed by a flat integer (row*cols+col)
+        # rather than a (row, col) tuple: int hashing/equality is cheaper than
+        # tuple, and these structures see hundreds of thousands of ops.
         open_set = [start_node]
         closed_set = set()
-        best_g_cost = {(start_row, start_col): 0}
+        best_g_cost = {start_row * cols + start_col: 0}
 
         nodes_explored = 0
         start_time = time.time()
@@ -326,7 +328,7 @@ class TerrainAwarePathfinder:
             current = pop(open_set)
             cr = current.row
             cc = current.col
-            ckey = (cr, cc)
+            ckey = cr * cols + cc
 
             if ckey in closed_set:
                 continue
@@ -355,7 +357,7 @@ class TerrainAwarePathfinder:
                 terrain_to = terr[next_row][next_col]
                 if terrain_to == OBSTACLE:
                     continue
-                nkey = (next_row, next_col)
+                nkey = next_row * cols + next_col
                 if nkey in closed_set:
                     continue
 
@@ -388,8 +390,6 @@ class TerrainAwarePathfinder:
                     * terrain_multiplier
                     * (1 + elevation_penalty + sustained_penalty + deviation_penalty)
                 )
-                if move_cost == INF:
-                    continue
 
                 new_g_cost = g_from + move_cost
 
