@@ -62,3 +62,5 @@ Thumbs.db
 
 # Documentation - keep all markdown files tracked
 # *.md files should be tracked
+# native A* kernel compiled artifacts
+app/engine_v2/_native_build/

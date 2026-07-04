@@ -16,6 +16,7 @@ weighted A* via heuristic_weight.
 import heapq
 import logging
 import math
+import os
 import time
 from typing import Dict, List, Optional, Tuple
 
@@ -234,6 +235,19 @@ class TerrainAwarePathfinder:
         Find optimal path from start to end considering terrain and elevation.
         Returns (path, stats) where path is a list of (lat, lon, elevation) tuples.
         """
+        # Fast path: the native C kernel is a byte-identical port (same paths and
+        # stats, verified in benchmarks/v2_tuning). Use it when available; fall
+        # back to the pure-Python loop below on any failure or when disabled via
+        # TRAIL_V2_DISABLE_NATIVE=1.
+        if os.environ.get("TRAIL_V2_DISABLE_NATIVE") not in ("1", "true", "True"):
+            try:
+                from app.engine_v2 import pathfinder_native
+
+                if pathfinder_native.available():
+                    return pathfinder_native.find_path_native(self, start_lat, start_lon, end_lat, end_lon)
+            except Exception:
+                logger.warning("native A* kernel failed; falling back to pure Python", exc_info=True)
+
         # Convert to grid coordinates
         start_row, start_col = self.lat_lon_to_grid(start_lat, start_lon)
         end_row, end_col = self.lat_lon_to_grid(end_lat, end_lon)

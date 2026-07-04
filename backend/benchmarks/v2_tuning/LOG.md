@@ -26,3 +26,14 @@ Clean baseline @ repeats=3 median = **78,307 ms** (measured by stashing changes 
 | 2 | `TerrainNode` → `__slots__` class, precompute `f_cost` (was `@property`) | ✅ exact | 51147 | **1.55x** | yes |
 | 3 | inline get_neighbors+calculate_move_cost into loop; hoist locals; `.tolist()` native array access; precompute per-offset horiz dist; hoist deviation penalty per-node | ✅ exact | 17341 | **4.56x** | yes |
 | 4 | flat integer keys (`row*cols+col`) for closed_set/best_g_cost; drop dead INF check | ✅ exact | 12552 | **6.30x** | yes |
+| 5 | **native C kernel** (`_astar_kernel.c`) compiled on-demand via gcc+ctypes; faithful port incl. byte-for-byte CPython heapq sift → identical tie-breaking; default-on with pure-Python fallback + `TRAIL_V2_DISABLE_NATIVE` kill-switch | ✅ exact | 761 | **103.9x** | yes |
+
+### Gen5 native notes
+- Compiled with `-O3 -ffp-contract=off` (no `-ffast-math`, no FMA contraction) so
+  double results are bit-identical to Python's `math`/`**`.
+- Verified byte-identical (paths + distance + gain + nodes_explored) on all 20
+  route×terrain runs AND on 7 synthetic unit-test scenarios
+  (`tests/unit/test_pathfinder_native.py`), including no-path, obstacle detour,
+  weighted heuristic, and steep/fatigue cases.
+- `long_ne` (390k nodes): 20.0s → 0.198s.
+- No new pip dependency (stdlib ctypes/subprocess + system gcc only).
