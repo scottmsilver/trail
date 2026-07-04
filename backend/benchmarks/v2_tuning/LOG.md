@@ -36,4 +36,10 @@ Clean baseline @ repeats=3 median = **78,307 ms** (measured by stashing changes 
   (`tests/unit/test_pathfinder_native.py`), including no-path, obstacle detour,
   weighted heuristic, and steep/fatigue cases.
 - `long_ne` (390k nodes): 20.0s → 0.198s.
-- No new pip dependency (stdlib ctypes/subprocess + system gcc only).
+- No new pip dependency (stdlib ctypes/subprocess + system compiler only).
+- Gen6: ported the kernel from C to C++ (`_astar_kernel.cpp`, compiled with g++)
+  purely for readability/safety — `std::vector` replaces all manual
+  malloc/realloc/free (the memory surface the security review had to reason
+  about). Still NOT using std::priority_queue (its heap layout differs from
+  heapq and would change tie-breaking); the CPython heapq port is kept explicit.
+  Re-verified byte-identical + 14 tests pass. Same ~104x speed.

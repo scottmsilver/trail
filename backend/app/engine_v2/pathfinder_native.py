@@ -1,13 +1,13 @@
 # RULE #0: MANDATORY FIRST ACTION FOR EVERY REQUEST
 # 1. Read CLAUDE.md COMPLETELY before responding
 # GUARDS ARE SAFETY EQUIPMENT - WHEN THEY FIRE, FIX THE PROBLEM THEY FOUND
-"""Optional native (C) A* kernel for the v2 terrain-aware pathfinder.
+"""Optional native (C++) A* kernel for the v2 terrain-aware pathfinder.
 
-The C source (`_astar_kernel.c`) is a faithful port of
+The C++ source (`_astar_kernel.cpp`) is a faithful port of
 TerrainAwarePathfinder.find_path: identical cost math and a byte-for-byte port
 of CPython's heapq, so it produces the *same* path as the pure-Python engine.
-It is compiled on demand with gcc (no build step, no new pip dependency) and
-loaded via ctypes. If gcc is unavailable or compilation fails, callers fall
+It is compiled on demand with g++ (no build step, no new pip dependency) and
+loaded via ctypes. If g++ is unavailable or compilation fails, callers fall
 back to the pure-Python implementation.
 
 Compile flags deliberately avoid -ffast-math and force -ffp-contract=off so
@@ -23,13 +23,12 @@ import subprocess
 import threading
 
 import numpy as np
-
 from app.engine_v2.path_layer import get_path_type_name
 
 logger = logging.getLogger(__name__)
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-_SRC = os.path.join(_HERE, "_astar_kernel.c")
+_SRC = os.path.join(_HERE, "_astar_kernel.cpp")
 _LOCK = threading.Lock()
 _LIB = None
 _LOAD_FAILED = False
@@ -45,16 +44,17 @@ def _build_dir() -> str:
 
 
 def _compile() -> str:
-    """Compile _astar_kernel.c to a cached .so keyed by source hash. Returns path."""
+    """Compile _astar_kernel.cpp to a cached .so keyed by source hash. Returns path."""
     with open(_SRC, "rb") as f:
         src = f.read()
     tag = hashlib.sha256(src).hexdigest()[:16]
     so_path = os.path.join(_build_dir(), f"astar_{tag}.so")
     if os.path.exists(so_path):
         return so_path
-    cc = os.environ.get("CC", "gcc")
+    cxx = os.environ.get("CXX", "g++")
     cmd = [
-        cc,
+        cxx,
+        "-std=c++17",
         "-O3",
         "-ffp-contract=off",
         "-fPIC",
@@ -62,7 +62,6 @@ def _compile() -> str:
         "-o",
         so_path,
         _SRC,
-        "-lm",
     ]
     logger.info("Compiling native A* kernel: %s", " ".join(cmd))
     subprocess.run(cmd, check=True, capture_output=True)  # nosec B603 - fixed argv, no shell
