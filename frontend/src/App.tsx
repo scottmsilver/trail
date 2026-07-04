@@ -330,6 +330,49 @@ function App() {
             </select>
           </div>
 
+          <div className="engine-selector">
+            <label htmlFor="routing-engine">Routing Engine: </label>
+            <select
+              id="routing-engine"
+              value={routeOptions.engine ?? 'v1'}
+              onChange={(e) => {
+                const engine = e.target.value as 'v1' | 'v2'
+                setRouteOptions({
+                  ...routeOptions,
+                  engine,
+                  // Drop v2-only params when switching back to v1
+                  heuristicWeight: engine === 'v2' ? routeOptions.heuristicWeight : undefined,
+                })
+              }}
+              className="profile-select"
+            >
+              <option value="v1">v1 (legacy DEM)</option>
+              <option value="v2">v2 (terrain A*)</option>
+            </select>
+            {routeOptions.engine === 'v2' && (
+              <label htmlFor="heuristic-weight" className="heuristic-weight-label">
+                Heuristic weight:{' '}
+                <input
+                  id="heuristic-weight"
+                  type="number"
+                  min={1}
+                  max={3}
+                  step={0.1}
+                  value={routeOptions.heuristicWeight ?? 1}
+                  onChange={(e) => {
+                    const raw = parseFloat(e.target.value)
+                    setRouteOptions({
+                      ...routeOptions,
+                      heuristicWeight: Number.isNaN(raw) ? undefined : raw,
+                    })
+                  }}
+                  className="heuristic-weight-input"
+                  title="1.0 = optimal (slowest), higher = faster/greedier"
+                />
+              </label>
+            )}
+          </div>
+
           <SavedLocations
             presets={presets}
             recents={recents}
