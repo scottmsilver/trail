@@ -9,6 +9,7 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.engine_v2.service import TrailFinderServiceV2
+from app.models.eval import ScoredPath, ScorePathRequest
 from app.models.route import RouteRequest, RouteResponse, RouteResult, RouteStatus, RouteStatusResponse
 from app.services.dem_tile_cache import DEMTileCache
 from app.services.obstacle_config import ObstaclePresets
@@ -700,6 +701,25 @@ async def prepopulate_bounding_box(corners: dict):
     except Exception as e:
         logger.error(f"Error prepopulating area: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error prepopulating area: {str(e)}")
+
+
+@app.post("/api/eval/score-path", response_model=ScoredPath)
+async def score_path_endpoint(request: ScorePathRequest):
+    """Score an arbitrary polyline with the engine's cost function.
+
+    Returns per-segment cost attribution so the Eval UI can explain why a
+    drawn path costs more (or less) than the engine's optimal route. Both are
+    scored the same way under the same options, so their costs are comparable.
+    """
+    if len(request.path) < 2:
+        raise HTTPException(status_code=400, detail="path needs at least two points")
+    try:
+        return await trail_finder_v2.score_path(request.path, request.options.model_dump())
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error scoring path: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/terrain/cost-point")

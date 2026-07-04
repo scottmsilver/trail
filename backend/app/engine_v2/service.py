@@ -21,6 +21,8 @@ from app.engine_v2.elevation import Bounds, TwoLayerElevationLibrary
 from app.engine_v2.elevation_fd_safe import FDManagedElevationLibrary
 from app.engine_v2.path_layer import PathLayer, PathType
 from app.engine_v2.pathfinder import TerrainAwarePathfinder
+from app.engine_v2.scoring import dominant_factor, rasterize_segment, score_polyline_cells
+from app.models.eval import ScoredPath, ScoredSegment
 from app.models.route import Coordinate
 
 logger = logging.getLogger(__name__)
@@ -173,19 +175,21 @@ class TrailFinderServiceV2:
             logger.exception("v2 route failed")
             return [], {"error": f"v2 engine error: {e}"}
 
-    def _find_route_sync(self, start, end, options):
-        warnings: List[str] = []
-        bounds = self.calculate_bounding_box(start, end, options.get("buffer"))
+    def _load_pathfinder(self, bounds, options):
+        """Load elevation + terrain for ``bounds`` and build a configured
+        pathfinder. Shared by routing and eval scoring so both observe identical
+        cost inputs. Returns ``(pathfinder, warnings)``.
 
-        # Shared library + close_all() clears all open datasets, so data
-        # loading must be serialized per service instance. The lock also
-        # serializes PathLayer's non-atomic npy cache write.
+        Shared library + close_all() clears all open datasets, so loading is
+        serialized per service instance; the lock also serializes PathLayer's
+        non-atomic npy cache write.
+        """
+        warnings: List[str] = []
         with self._data_lock:
             self.elevation_lib.load_area(bounds)
             elevation, meta = self.elevation_lib.get_elevation_array(bounds)
-            # TwoLayerElevationLibrary's metadata carries the transform as a
-            # coefficient dict {a,b,c,d,e,f}; injected fakes may pass a real
-            # Affine. The pathfinder needs a rasterio Affine.
+            # Metadata carries the transform as a coefficient dict {a..f};
+            # injected fakes may pass a real Affine. Pathfinder needs an Affine.
             raw_transform = meta.get("transform") if isinstance(meta, dict) else None
             if isinstance(raw_transform, Affine):
                 transform = raw_transform
@@ -209,7 +213,61 @@ class TrailFinderServiceV2:
         if not (terrain_grid != PathType.UNKNOWN).any():
             warnings.append("OSM data unavailable — terrain-only routing")
 
-        pf = self._make_pathfinder(elevation, transform, terrain_grid, options)
+        return self._make_pathfinder(elevation, transform, terrain_grid, options), warnings
+
+    async def score_path(self, path: List[Coordinate], options: dict) -> ScoredPath:
+        """Score an arbitrary polyline with the engine's cost function (async)."""
+        return await asyncio.to_thread(self._score_path_sync, path, options)
+
+    def _score_path_sync(self, path: List[Coordinate], options: dict) -> ScoredPath:
+        options = options or {}
+        if len(path) < 2:
+            raise ValueError("path needs at least two points")
+        # Bounding box covering the whole polyline (plus the usual buffer).
+        sw = Coordinate(lat=min(p.lat for p in path), lon=min(p.lon for p in path))
+        ne = Coordinate(lat=max(p.lat for p in path), lon=max(p.lon for p in path))
+        bounds = self.calculate_bounding_box(sw, ne, options.get("buffer"))
+        pf, _warnings = self._load_pathfinder(bounds, options)
+
+        verts = [pf.lat_lon_to_grid(p.lat, p.lon) for p in path]
+        # Deviation penalty is measured against the whole-path straight line —
+        # the same reference the engine's optimal path is scored against.
+        sld = pf.resolution * math.sqrt((verts[0][0] - verts[-1][0]) ** 2 + (verts[0][1] - verts[-1][1]) ** 2)
+        segments: List[ScoredSegment] = []
+        total = 0.0
+        dist = 0.0
+        egain = 0.0
+        steep = 0.0
+        for (a, b), pa, pb in zip(zip(verts, verts[1:]), path, path[1:]):
+            cells = rasterize_segment(a[0], a[1], b[0], b[1])
+            seg = score_polyline_cells(pf, cells, sld, running_distance=dist, running_steep=steep)
+            segments.append(
+                ScoredSegment(
+                    **{
+                        "from": pa,
+                        "to": pb,
+                        "cost": seg["total"],
+                        "factors": seg["factors"],
+                        "dominantFactor": dominant_factor(seg["factors"]),
+                    }
+                )
+            )
+            total += seg["total"]
+            dist += seg["distance"]
+            egain += seg["egain"]
+            steep = seg["steep"]
+        return ScoredPath(
+            path=path,
+            snapped=False,
+            totalCost=total,
+            distanceM=dist,
+            elevationGainM=egain,
+            segments=segments,
+        )
+
+    def _find_route_sync(self, start, end, options):
+        bounds = self.calculate_bounding_box(start, end, options.get("buffer"))
+        pf, warnings = self._load_pathfinder(bounds, options)
         result = pf.find_path(start.lat, start.lon, end.lat, end.lon)
         if result is None:
             stats = {"error": "No route found", "engine": "v2"}

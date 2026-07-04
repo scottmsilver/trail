@@ -162,10 +162,15 @@ class TerrainAwarePathfinder:
         straight_line_distance: float,
         current_distance: float,
         from_steep_distance: float = 0,
-    ) -> Tuple[float, float]:
+        return_breakdown: bool = False,
+    ):
         """
         Calculate cost of moving between two cells considering terrain and elevation.
-        Returns: (cost, new_steep_distance)
+
+        Returns ``(cost, new_steep_distance)`` normally. When ``return_breakdown``
+        is True, returns a dict ``{"cost", "factors", "new_steep_distance"}`` where
+        ``factors`` (base/terrain/slope/sustained/deviation) sum to ``cost`` — used
+        by the eval scorer to attribute why a path is expensive.
         """
         # Get elevations
         elev_from = self.elevation[from_row, from_col]
@@ -197,6 +202,13 @@ class TerrainAwarePathfinder:
 
         # Check max slope constraint
         if slope_degrees > self.max_slope_degrees:
+            if return_breakdown:
+                inf = float("inf")
+                return {
+                    "cost": inf,
+                    "factors": {"base": base_cost, "terrain": 0.0, "slope": inf, "sustained": 0.0, "deviation": 0.0},
+                    "new_steep_distance": from_steep_distance,
+                }
             return float("inf"), from_steep_distance  # Impassable
 
         # Elevation penalty (exponential based on slope)
@@ -225,6 +237,23 @@ class TerrainAwarePathfinder:
 
         # Total cost combines all factors
         total_cost = base_cost * terrain_multiplier * (1 + elevation_penalty + sustained_penalty + deviation_penalty)
+
+        if return_breakdown:
+            # Attribute the multiplicative cost additively so components sum to
+            # total_cost: base carries distance, terrain the multiplier excess,
+            # each penalty is (base*terrain)*penalty.
+            bt = base_cost * terrain_multiplier
+            return {
+                "cost": total_cost,
+                "factors": {
+                    "base": base_cost,
+                    "terrain": bt - base_cost,
+                    "slope": bt * elevation_penalty,
+                    "sustained": bt * sustained_penalty,
+                    "deviation": bt * deviation_penalty,
+                },
+                "new_steep_distance": new_steep_distance,
+            }
 
         return total_cost, new_steep_distance
 
