@@ -63,9 +63,10 @@ def test_path_type_names():
 
 import geopandas as gpd
 import numpy as np
-from app.engine_v2.path_layer import rasterize_features
 from rasterio.transform import from_bounds
 from shapely.geometry import LineString, Polygon
+
+from app.engine_v2.path_layer import rasterize_features
 
 # 10x10 grid covering a 0.01 x 0.01 degree box
 SHAPE = (10, 10)
@@ -185,5 +186,5 @@ class TestPathLayer:
         assert len(calls) == 4  # re-fetched: two more calls
         assert (grid2 == PathType.TRAIL).any()
 
-        # The recovered (real) grid IS cached now
-        assert any(p.suffix == ".npy" for p in tmp_path.iterdir())
+        # The recovered (real) data IS cached now, as per-tile feature files.
+        assert any(p.name.startswith("osmtile_") and p.suffix == ".pkl" for p in tmp_path.iterdir())

@@ -15,9 +15,11 @@ This is the module the backend3 rewrite referenced but never implemented.
 Tag vocabularies are ported from app/services/path_preferences.py and
 app/services/obstacle_config.py (the proven v1 configuration).
 """
-import hashlib
 import logging
+import math
 import os
+import pickle
+from collections import namedtuple
 from enum import IntEnum
 from typing import Callable, Optional
 
@@ -190,31 +192,88 @@ def rasterize_features(paths_gdf, obstacles_gdf, shape, transform) -> np.ndarray
 
 
 def _default_fetch(bounds, tags):
-    """Fetch OSM features via osmnx. Imported lazily so unit tests never need it."""
+    """Fetch OSM features via osmnx. Imported lazily so unit tests never need it.
+
+    The Overpass endpoint(s) and request timeout come from the environment so we
+    never hard-code a server URL: OVERPASS_URLS is a comma-separated list of
+    mirrors tried in order; OVERPASS_TIMEOUT is the per-request seconds. With no
+    OVERPASS_URLS set, osmnx's own default endpoint is used (unchanged behavior).
+    """
     import osmnx as ox
     from shapely.geometry import box as shapely_box
 
-    bbox = shapely_box(bounds.west, bounds.south, bounds.east, bounds.north)
     ox.settings.log_console = False
-    return ox.features_from_polygon(bbox, tags)
+    ox.settings.requests_timeout = int(os.environ.get("OVERPASS_TIMEOUT", "30"))
+    bbox = shapely_box(bounds.west, bounds.south, bounds.east, bounds.north)
+
+    endpoints = [u.strip() for u in os.environ.get("OVERPASS_URLS", "").split(",") if u.strip()]
+    if not endpoints:
+        return ox.features_from_polygon(bbox, tags)
+
+    last_err = None
+    for url in endpoints:
+        ox.settings.overpass_url = url
+        try:
+            return ox.features_from_polygon(bbox, tags)
+        except Exception as e:  # try the next mirror
+            last_err = e
+            logger.warning("Overpass endpoint failed (%s): %s", url, e)
+    raise last_err
+
+
+# OSM features are cached on a FIXED geographic tile grid (not per-route
+# bounding boxes) so overlapping routes reuse tiles instead of re-fetching data
+# we already have. Tile size is in degrees; override with OSM_TILE_DEG.
+_DEFAULT_TILE_DEG = 0.02
+
+_BBox = namedtuple("_BBox", ["south", "west", "north", "east"])
+
+
+def _concat_features(gdfs):
+    """Concatenate non-empty GeoDataFrames, or return None if there are none."""
+    gdfs = [g for g in gdfs if g is not None and len(g) > 0]
+    if not gdfs:
+        return None
+    if len(gdfs) == 1:
+        return gdfs[0]
+    import pandas as pd
+
+    return pd.concat(gdfs, ignore_index=True)
 
 
 class PathLayer:
-    """Produces terrain-type grids aligned to elevation arrays, cached on disk."""
+    """Produces terrain-type grids aligned to elevation arrays.
 
-    def __init__(self, cache_dir: str, fetch_fn: Optional[Callable] = None):
+    OSM features are fetched from Overpass and cached per FIXED tile, so
+    overlapping routes reuse cached data instead of re-hitting Overpass. A
+    route's grid is composed by loading every tile it overlaps (fetching only
+    the tiles not already on disk) and rasterizing their features onto the
+    route's exact shape/transform.
+    """
+
+    def __init__(self, cache_dir: str, fetch_fn: Optional[Callable] = None, tile_deg: Optional[float] = None):
         self.cache_dir = cache_dir
         self.fetch_fn = fetch_fn or _default_fetch
+        self.tile_deg = tile_deg if tile_deg is not None else float(os.environ.get("OSM_TILE_DEG", _DEFAULT_TILE_DEG))
         os.makedirs(cache_dir, exist_ok=True)
 
     @staticmethod
     def get_path_type_name(code: int) -> str:
         return get_path_type_name(code)
 
-    def _cache_path(self, bounds, shape) -> str:
-        key = f"{bounds.south:.6f}_{bounds.west:.6f}_" f"{bounds.north:.6f}_{bounds.east:.6f}_{shape[0]}x{shape[1]}"
-        digest = hashlib.sha1(key.encode()).hexdigest()[:16]
-        return os.path.join(self.cache_dir, f"pathgrid_{digest}.npy")
+    # --- fixed tile grid -------------------------------------------------
+    def _tile_indices(self, bounds):
+        deg = self.tile_deg
+        lat_lo, lat_hi = math.floor(bounds.south / deg), math.floor(bounds.north / deg)
+        lon_lo, lon_hi = math.floor(bounds.west / deg), math.floor(bounds.east / deg)
+        return [(ti, tj) for ti in range(lat_lo, lat_hi + 1) for tj in range(lon_lo, lon_hi + 1)]
+
+    def _tile_bounds(self, ti, tj):
+        deg = self.tile_deg
+        return _BBox(south=ti * deg, west=tj * deg, north=(ti + 1) * deg, east=(tj + 1) * deg)
+
+    def _tile_cache(self, ti, tj) -> str:
+        return os.path.join(self.cache_dir, f"osmtile_{ti}_{tj}.pkl")
 
     def _safe_fetch(self, bounds, tags):
         try:
@@ -223,17 +282,46 @@ class PathLayer:
             logger.warning(f"OSM fetch failed ({e}); continuing without this layer")
             return None
 
+    def _fetch_and_cache_tiles(self, missing):
+        """Fetch the bounding box of the missing tiles once, split the features
+        into each tile, and cache them. Only caches when BOTH the path and
+        obstacle queries succeed, so a partial outage never pins incomplete data
+        to disk. A single union fetch covers every missing tile (their bbox
+        contains each), keeping Overpass calls to two regardless of tile count."""
+        south = min(ti for ti, _ in missing) * self.tile_deg
+        north = (max(ti for ti, _ in missing) + 1) * self.tile_deg
+        west = min(tj for _, tj in missing) * self.tile_deg
+        east = (max(tj for _, tj in missing) + 1) * self.tile_deg
+        union = _BBox(south=south, west=west, north=north, east=east)
+
+        paths_gdf = self._safe_fetch(union, PATH_TAGS)
+        obstacles_gdf = self._safe_fetch(union, OBSTACLE_TAGS)
+        if paths_gdf is None or obstacles_gdf is None:
+            return  # outage / partial failure: cache nothing, retry next time
+
+        for ti, tj in missing:
+            tb = self._tile_bounds(ti, tj)
+            tile_paths = paths_gdf.cx[tb.west : tb.east, tb.south : tb.north]
+            tile_obstacles = obstacles_gdf.cx[tb.west : tb.east, tb.south : tb.north]
+            with open(self._tile_cache(ti, tj), "wb") as fh:
+                pickle.dump({"paths": tile_paths, "obstacles": tile_obstacles}, fh)
+
     def get_grid(self, bounds, shape, transform) -> np.ndarray:
-        cache_file = self._cache_path(bounds, shape)
-        if os.path.exists(cache_file):
-            grid = np.load(cache_file)
-            if grid.shape == tuple(shape):
-                return grid
-        paths_gdf = self._safe_fetch(bounds, PATH_TAGS)
-        obstacles_gdf = self._safe_fetch(bounds, OBSTACLE_TAGS)
-        grid = rasterize_features(paths_gdf, obstacles_gdf, shape, transform)
-        # Only cache real data — a grid built during an OSM outage would
-        # otherwise pin the outage to disk.
-        if paths_gdf is not None or obstacles_gdf is not None:
-            np.save(cache_file, grid)
-        return grid
+        tiles = self._tile_indices(bounds)
+        missing = [(ti, tj) for ti, tj in tiles if not os.path.exists(self._tile_cache(ti, tj))]
+        if missing:
+            self._fetch_and_cache_tiles(missing)
+
+        paths, obstacles = [], []
+        for ti, tj in tiles:
+            cache_file = self._tile_cache(ti, tj)
+            if not os.path.exists(cache_file):
+                continue  # still missing after an outage -> degrade gracefully
+            with open(cache_file, "rb") as fh:
+                data = pickle.load(fh)
+            if data.get("paths") is not None:
+                paths.append(data["paths"])
+            if data.get("obstacles") is not None:
+                obstacles.append(data["obstacles"])
+
+        return rasterize_features(_concat_features(paths), _concat_features(obstacles), shape, transform)
