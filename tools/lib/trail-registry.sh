@@ -88,9 +88,15 @@ PY
     echo "      run tools/trail-cf-setup.sh once to create the tunnel + Access app."
     return 0
   fi
-  # Reload: restart the trail tunnel process.
-  pkill -f "cloudflared.*config-trail.yml" 2>/dev/null || true
+  # Reload: restart the trail tunnel process. Track it by pidfile rather than
+  # `pkill -f` (a broad pattern can match unrelated processes — even the caller).
+  local pidfile="$SHARED/trail-tunnel.pid"
+  if [[ -f "$pidfile" ]] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then
+    kill "$(cat "$pidfile")" 2>/dev/null || true
+    sleep 1
+  fi
   nohup cloudflared tunnel --config "$TUNNEL_CFG" run trail \
     >> "$SHARED/logs/tunnel.log" 2>&1 &
+  echo "$!" > "$pidfile"
   echo "reloaded trail tunnel (pid $!)"
 }
