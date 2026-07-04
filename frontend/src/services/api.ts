@@ -29,6 +29,8 @@ export interface RouteOptions {
   maxSlope?: number
   gradientPreference?: number
   trailPreference?: number
+  engine?: 'v1' | 'v2'
+  heuristicWeight?: number
 }
 
 export interface RouteResponse {
