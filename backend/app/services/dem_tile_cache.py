@@ -229,7 +229,9 @@ class DEMTileCache:
         optimization_config = getattr(self, "optimization_config", None)
 
         if use_compression:
-            logger.debug(f"[ALGORITHM] Large search area (grid distance: {grid_distance}). Using compressed pathfinding...")
+            logger.debug(
+                f"[ALGORITHM] Large search area (grid distance: {grid_distance}). Using compressed pathfinding..."
+            )
             # For now, just use bidirectional
             path = self.bidirectional_astar(
                 cost_surface, indices, start_idx, end_idx, out_trans, transformer, dem, optimization_config
@@ -240,7 +242,9 @@ class DEMTileCache:
                 cost_surface, indices, start_idx, end_idx, out_trans, transformer, dem, optimization_config
             )
         else:
-            logger.debug(f"[ALGORITHM] Small search area (grid distance: {grid_distance}). Using standard optimized A*...")
+            logger.debug(
+                f"[ALGORITHM] Small search area (grid distance: {grid_distance}). Using standard optimized A*..."
+            )
             path = self.astar_pathfinding_optimized(
                 cost_surface, indices, start_idx, end_idx, out_trans, transformer, dem
             )
@@ -271,7 +275,9 @@ class DEMTileCache:
         path_raster = None
         path_types = None
         if tiled_result is not None:
-            cost_surface, slope_degrees, indices, dem_composed, path_raster, path_types = tiled_result
+            # _try_tiled_cost_surface returns 7 values (matches the visualization
+            # caller); slope_change is unused on this route path but must be unpacked.
+            cost_surface, slope_degrees, indices, dem_composed, path_raster, path_types, slope_change = tiled_result
             # Use composed DEM if available
             if dem_composed is not None:
                 dem = dem_composed
@@ -351,7 +357,9 @@ class DEMTileCache:
         algo_start = time.time()
 
         if use_compression:
-            logger.debug(f"[ALGORITHM] Large search area (grid distance: {grid_distance}). Using compressed pathfinding...")
+            logger.debug(
+                f"[ALGORITHM] Large search area (grid distance: {grid_distance}). Using compressed pathfinding..."
+            )
             path = self.astar_pathfinding_compressed(
                 cost_surface,
                 indices,
@@ -378,7 +386,9 @@ class DEMTileCache:
             )
         else:
             # Use optimized A* for smaller searches
-            logger.debug(f"[ALGORITHM] Small search area (grid distance: {grid_distance}). Using standard optimized A*...")
+            logger.debug(
+                f"[ALGORITHM] Small search area (grid distance: {grid_distance}). Using standard optimized A*..."
+            )
             path = self.astar_pathfinding_optimized(
                 cost_surface, indices, start_idx, end_idx, transform_to_use, transformer, dem
             )
