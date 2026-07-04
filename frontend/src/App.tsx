@@ -7,7 +7,7 @@ import CalibrationToolbar from './components/CalibrationToolbar/CalibrationToolb
 import PrepopulateArea from './components/PrepopulateArea/PrepopulateArea'
 import SavedLocations from './components/SavedLocations/SavedLocations'
 import { useSavedLocations, type SavedLocation } from './hooks/useSavedLocations'
-import api from './services/api'
+import api, { API_BASE } from './services/api'
 import type { Coordinate, RouteResult, RouteOptions } from './services/api'
 import L from 'leaflet'
 
@@ -191,7 +191,7 @@ function App() {
       // Use the route ID if it exists, otherwise use the export endpoint
       if (route.routeId && route.routeId !== 'debug') {
         // Download from existing route
-        const response = await fetch(`http://localhost:9001/api/routes/${route.routeId}/gpx`)
+        const response = await fetch(`${API_BASE}/api/routes/${route.routeId}/gpx`)
         if (!response.ok) {
           throw new Error('Failed to export GPX')
         }
@@ -262,7 +262,7 @@ function App() {
     setCacheProgress({ active: true, message: `Caching ~${approxAreaKm2.toFixed(1)} km² for current view...` })
 
     try {
-      const response = await fetch('http://localhost:9001/api/cache/prepopulate-box', {
+      const response = await fetch(`${API_BASE}/api/cache/prepopulate-box`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

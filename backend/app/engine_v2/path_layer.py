@@ -199,6 +199,13 @@ def _default_fetch(bounds, tags):
     mirrors tried in order; OVERPASS_TIMEOUT is the per-request seconds. With no
     OVERPASS_URLS set, osmnx's own default endpoint is used (unchanged behavior).
     """
+    # Fast opt-out for environments with no OSM/Overpass reachability: raising
+    # here (caught by _safe_fetch) degrades to terrain-only routing instantly,
+    # instead of osmnx splitting the polygon into sub-queries and retrying each
+    # against an unreachable host (a multi-minute stall per route).
+    if os.environ.get("OSM_DISABLE") in ("1", "true", "True"):
+        raise RuntimeError("OSM disabled via OSM_DISABLE")
+
     import osmnx as ox
     from shapely.geometry import box as shapely_box
 

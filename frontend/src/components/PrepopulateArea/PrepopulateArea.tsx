@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import L from 'leaflet';
+import { API_BASE } from '../../services/api';
 import './PrepopulateArea.css';
 
 interface Corner {
@@ -190,7 +191,7 @@ const PrepopulateArea: React.FC<PrepopulateAreaProps> = ({ map, onClose }) => {
         setProgress((prev) => Math.min(prev + 10, 90));
       }, 1000);
 
-      const response = await fetch('http://localhost:9001/api/cache/prepopulate-box', {
+      const response = await fetch(`${API_BASE}/api/cache/prepopulate-box`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
