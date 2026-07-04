@@ -2,7 +2,7 @@
 
 Run several dev versions of the trail app at once. Each instance is a git
 worktree with its own live-reloading backend + frontend on a derived port pair.
-All instances share **one** copy of the expensive OSM/DEM caches, so OSM is
+All instances share **one** copy of the expensive OSM/DEM caches (six env-var-redirected dirs), so OSM is
 fetched once, ever. Each instance is reachable privately at
 `https://trail-<name>.oursilverfamily.com`, gated by Cloudflare Access to one
 email. (Single-level hosts so free Universal SSL covers them — a `*.t.` wildcard
@@ -24,8 +24,9 @@ and writes `trail-shared.env`. The five cache env vars it sets:
 |---|---|
 | `OSM_CACHE_DIR` | osmnx Overpass responses (the ~2 GB one) |
 | `HYRIVER_CACHE_NAME` | DEM py3dep/HyRiver HTTP downloads (sqlite file) |
-| `TRAIL_DEM_DATA_DIR` | DEM composites |
+| `TRAIL_DEM_DATA_DIR` | legacy DEM composites |
 | `TRAIL_TILE_CACHE_DIR` | computed cost-surface tiles |
+| `TRAIL_V2_DEM_DIR` | v2 engine DEM tiles (`dem_data_v2/`, the default engine) |
 | `TRAIL_V2_PATH_CACHE_DIR` | v2 path results + `osmtile_*.pkl` OSM tiles |
 
 The backend honors all five with no hardcoded paths; unset ⇒ old working-dir

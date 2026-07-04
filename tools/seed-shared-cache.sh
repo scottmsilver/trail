@@ -10,7 +10,7 @@ set -euo pipefail
 SHARED="${TRAIL_SHARED_DIR:-$HOME/development/trail-shared}"
 MAIN="${TRAIL_MAIN_CHECKOUT:-$HOME/development/trail}"
 
-mkdir -p "$SHARED"/{osm,http,dem_data,tile_cache,path_cache_v2,logs}
+mkdir -p "$SHARED"/{osm,http,dem_data,dem_data_v2,tile_cache,path_cache_v2,logs}
 
 copy_dir_once() { # $1 = src dir, $2 = dest dir  (copies contents, once)
   local src="$1" dest="$2"
@@ -38,9 +38,10 @@ if [[ -f "$MAIN/backend/cache/aiohttp_cache.sqlite" && ! -f "$SHARED/http/aiohtt
   cp -a "$MAIN/backend/cache/aiohttp_cache.sqlite" "$SHARED/http/"
 fi
 
-copy_dir_once "$MAIN/dem_data"               "$SHARED/dem_data"
-copy_dir_once "$MAIN/backend/tile_cache"     "$SHARED/tile_cache"
-copy_dir_once "$MAIN/backend/path_cache_v2"  "$SHARED/path_cache_v2"
+copy_dir_once "$MAIN/dem_data"                "$SHARED/dem_data"
+copy_dir_once "$MAIN/backend/dem_data_v2"     "$SHARED/dem_data_v2"
+copy_dir_once "$MAIN/backend/tile_cache"      "$SHARED/tile_cache"
+copy_dir_once "$MAIN/backend/path_cache_v2"   "$SHARED/path_cache_v2"
 
 cat > "$SHARED/trail-shared.env" <<EOF
 # Shared cache locations for all trail dev instances. Source before launching.
@@ -48,6 +49,7 @@ export OSM_CACHE_DIR="$SHARED/osm"
 export HYRIVER_CACHE_NAME="$SHARED/http/aiohttp_cache.sqlite"
 export TRAIL_DEM_DATA_DIR="$SHARED/dem_data"
 export TRAIL_TILE_CACHE_DIR="$SHARED/tile_cache"
+export TRAIL_V2_DEM_DIR="$SHARED/dem_data_v2"
 export TRAIL_V2_PATH_CACHE_DIR="$SHARED/path_cache_v2"
 EOF
 echo "wrote $SHARED/trail-shared.env"
