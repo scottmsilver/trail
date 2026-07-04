@@ -24,3 +24,4 @@ Clean baseline @ repeats=3 median = **78,307 ms** (measured by stashing changes 
 | 0 | baseline | — | 78307 | 1.00x | (golden) |
 | 1 | `math` module instead of scalar `np.sqrt/arctan2/degrees` in hot path | ✅ exact | 57086 | **1.39x** | yes |
 | 2 | `TerrainNode` → `__slots__` class, precompute `f_cost` (was `@property`) | ✅ exact | 51147 | **1.55x** | yes |
+| 3 | inline get_neighbors+calculate_move_cost into loop; hoist locals; `.tolist()` native array access; precompute per-offset horiz dist; hoist deviation penalty per-node | ✅ exact | 17341 | **4.56x** | yes |

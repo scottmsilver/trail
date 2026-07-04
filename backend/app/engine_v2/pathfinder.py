@@ -261,84 +261,159 @@ class TerrainAwarePathfinder:
         logger.debug(f"End terrain: {get_path_type_name(self.terrain_types[end_row, end_col])}")
         logger.debug(f"Straight-line distance: {straight_line_distance:.1f}m")
 
-        # Initialize A* algorithm
+        # --- hot loop: everything below is an inlined, locals-bound version of
+        # get_neighbors() + calculate_move_cost() + heuristic(). The standalone
+        # methods are kept intact for the public API / tests; this duplicates
+        # their exact arithmetic to avoid per-edge Python call + attribute
+        # lookup + scalar-numpy overhead. Any change here must keep byte-for-byte
+        # identical results (see benchmarks/v2_tuning). ---
+        rows = self.rows
+        cols = self.cols
+        res = self.resolution
+        hw = self.heuristic_weight
+        ew = self.elevation_weight
+        eexp = self.elevation_exponent
+        max_slope = self.max_slope_degrees
+        steep_thr = self.steep_threshold
+        fat_dist = self.fatigue_distance
+        fat_exp = self.fatigue_exponent
+        sust_w = self.sustained_slope_weight
+        tcost_get = self.terrain_costs.get
+        sld = max(straight_line_distance, 1.0)
+        degrees = math.degrees
+        atan2 = math.atan2
+        sqrt = math.sqrt
+        push = heapq.heappush
+        pop = heapq.heappop
+        INF = float("inf")
+
+        # Native-Python views: nested-list indexing returns plain float/int
+        # (no np.float64 boxing) and the values are bit-identical to arr[r, c].
+        elev = self.elevation.tolist()
+        terr = self.terrain_types.tolist()
+
+        OBSTACLE = int(PathType.OBSTACLE)
+        TRAIL = int(PathType.TRAIL)
+        good_after_trail = frozenset((int(PathType.TRAIL), int(PathType.PATH), int(PathType.NATURAL)))
+
+        # 8-connected offsets in the SAME order get_neighbors yields them
+        # (dr: -1,0,1 outer, dc: -1,0,1 inner, skipping 0,0), with the per-step
+        # horizontal distance precomputed (res * sqrt(dr^2 + dc^2)).
+        offsets = [
+            (dr, dc, res * sqrt(dr * dr + dc * dc))
+            for dr in (-1, 0, 1)
+            for dc in (-1, 0, 1)
+            if not (dr == 0 and dc == 0)
+        ]
+
         start_node = TerrainNode(
             row=start_row,
             col=start_col,
             g_cost=0,
-            h_cost=self.heuristic(start_row, start_col, end_row, end_col),
-            elevation=self.elevation[start_row, start_col],
-            terrain_type=self.terrain_types[start_row, start_col],
+            h_cost=hw * (res * sqrt((start_row - end_row) ** 2 + (start_col - end_col) ** 2)),
+            elevation=elev[start_row][start_col],
+            terrain_type=terr[start_row][start_col],
         )
 
         open_set = [start_node]
         closed_set = set()
-        best_g_cost = {}
-        best_g_cost[(start_row, start_col)] = 0
+        best_g_cost = {(start_row, start_col): 0}
 
         nodes_explored = 0
         start_time = time.time()
 
         while open_set:
-            current = heapq.heappop(open_set)
+            current = pop(open_set)
+            cr = current.row
+            cc = current.col
+            ckey = (cr, cc)
 
-            if (current.row, current.col) in closed_set:
+            if ckey in closed_set:
                 continue
 
             nodes_explored += 1
-            if nodes_explored % 1000 == 0:
-                logger.debug(f"  Explored {nodes_explored} nodes...")
 
-            # Check if we reached the goal
-            if current.row == end_row and current.col == end_col:
-                logger.debug(f"\nPath found! Explored {nodes_explored} nodes in {time.time() - start_time:.2f}s")
+            if cr == end_row and cc == end_col:
+                logger.debug(f"Path found! Explored {nodes_explored} nodes in {time.time() - start_time:.2f}s")
                 return self.reconstruct_path(current, nodes_explored, time.time() - start_time)
 
-            closed_set.add((current.row, current.col))
+            closed_set.add(ckey)
 
-            # Explore neighbors
-            for next_row, next_col in self.get_neighbors(current.row, current.col):
-                if (next_row, next_col) in closed_set:
+            elev_from = elev[cr][cc]
+            terrain_from = terr[cr][cc]
+            g_from = current.g_cost
+            steep_from = current.consecutive_steep_distance
+            deviation_ratio = g_from / sld
+            deviation_penalty = 0.1 * max(0, deviation_ratio - 1.5) ** 2
+            from_is_trail = terrain_from == TRAIL
+
+            for dr, dc, horiz_distance in offsets:
+                next_row = cr + dr
+                next_col = cc + dc
+                if next_row < 0 or next_row >= rows or next_col < 0 or next_col >= cols:
+                    continue
+                terrain_to = terr[next_row][next_col]
+                if terrain_to == OBSTACLE:
+                    continue
+                nkey = (next_row, next_col)
+                if nkey in closed_set:
                     continue
 
-                # Calculate cost to move to this neighbor
-                move_cost, new_steep_distance = self.calculate_move_cost(
-                    current.row,
-                    current.col,
-                    next_row,
-                    next_col,
-                    straight_line_distance,
-                    current.g_cost,
-                    current.consecutive_steep_distance,
+                elev_to = elev[next_row][next_col]
+
+                # slope
+                elevation_change = abs(elev_to - elev_from)
+                slope_degrees = degrees(atan2(elevation_change, horiz_distance))
+                if slope_degrees > max_slope:
+                    continue  # impassable
+
+                terrain_multiplier = tcost_get(terrain_to, 1.0)
+                if from_is_trail and terrain_to not in good_after_trail:
+                    terrain_multiplier *= 1.5
+
+                elevation_penalty = ew * (slope_degrees / 10.0) ** eexp
+                if elev_to > elev_from:
+                    elevation_penalty *= 1.5
+
+                if slope_degrees > steep_thr:
+                    new_steep_distance = steep_from + horiz_distance
+                    fatigue_factor = (new_steep_distance / fat_dist) ** fat_exp
+                    sustained_penalty = sust_w * fatigue_factor * horiz_distance
+                else:
+                    new_steep_distance = max(0, steep_from - horiz_distance * 0.5)
+                    sustained_penalty = 0
+
+                move_cost = (
+                    horiz_distance
+                    * terrain_multiplier
+                    * (1 + elevation_penalty + sustained_penalty + deviation_penalty)
+                )
+                if move_cost == INF:
+                    continue
+
+                new_g_cost = g_from + move_cost
+
+                prev = best_g_cost.get(nkey)
+                if prev is not None and new_g_cost >= prev:
+                    continue
+                best_g_cost[nkey] = new_g_cost
+
+                h = hw * (res * sqrt((next_row - end_row) ** 2 + (next_col - end_col) ** 2))
+                push(
+                    open_set,
+                    TerrainNode(
+                        row=next_row,
+                        col=next_col,
+                        g_cost=new_g_cost,
+                        h_cost=h,
+                        parent=current,
+                        elevation=elev_to,
+                        terrain_type=terrain_to,
+                        consecutive_steep_distance=new_steep_distance,
+                    ),
                 )
 
-                # Skip if move is impossible (infinite cost)
-                if move_cost == float("inf"):
-                    continue
-
-                new_g_cost = current.g_cost + move_cost
-
-                # Skip if we've found a better path to this cell
-                if (next_row, next_col) in best_g_cost and new_g_cost >= best_g_cost[(next_row, next_col)]:
-                    continue
-
-                best_g_cost[(next_row, next_col)] = new_g_cost
-
-                # Create new node
-                new_node = TerrainNode(
-                    row=next_row,
-                    col=next_col,
-                    g_cost=new_g_cost,
-                    h_cost=self.heuristic(next_row, next_col, end_row, end_col),
-                    parent=current,
-                    elevation=self.elevation[next_row, next_col],
-                    terrain_type=self.terrain_types[next_row, next_col],
-                    consecutive_steep_distance=new_steep_distance,
-                )
-
-                heapq.heappush(open_set, new_node)
-
-        logger.debug(f"\nNo path found after exploring {nodes_explored} nodes")
+        logger.debug(f"No path found after exploring {nodes_explored} nodes")
         return None
 
     def reconstruct_path(self, end_node, nodes_explored, elapsed_s):
