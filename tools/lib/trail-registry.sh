@@ -59,6 +59,52 @@ except Exception:
 '
 }
 
+CF_API="https://api.cloudflare.com/client/v4"
+_cf_env() {
+  local f="$HOME/development/trail-shared/trail-cf.env"
+  # shellcheck source=/dev/null
+  [[ -f "$f" ]] && source "$f"
+}
+
+# Create the single-level DNS CNAME for a host (uses cloudflared cert.pem, not
+# the API token). Idempotent via --overwrite-dns.
+cf_route_dns() { # $1=host
+  cloudflared tunnel route dns --overwrite-dns trail "$1" >/dev/null 2>&1 \
+    && echo "dns: routed $1" || echo "dns: could not route $1 (check cert.pem)"
+}
+
+# Ensure a self-hosted Access app + allow-by-email policy exists for a host.
+# Idempotent (reuses an existing app for that exact domain). Echoes the app id,
+# or empty when no token is configured (instance then runs UNGATED).
+cf_access_ensure() { # $1=host
+  _cf_env
+  [[ -n "${CLOUDFLARE_API_TOKEN:-}" ]] || { echo ""; return 0; }
+  local host="$1" aid
+  aid=$(curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+    "$CF_API/accounts/$CF_ACCOUNT_ID/access/apps" \
+    | "$PY" -c "import sys,json
+apps=json.load(sys.stdin).get('result') or []
+print(next((a['id'] for a in apps if a.get('domain')=='$host'),''))")
+  if [[ -z "$aid" ]]; then
+    aid=$(curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H "Content-Type: application/json" \
+      -X POST "$CF_API/accounts/$CF_ACCOUNT_ID/access/apps" \
+      --data "{\"name\":\"trail-$host\",\"domain\":\"$host\",\"type\":\"self_hosted\",\"session_duration\":\"720h\",\"app_launcher_visible\":false}" \
+      | "$PY" -c 'import sys,json; print(json.load(sys.stdin)["result"]["id"])')
+    curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H "Content-Type: application/json" \
+      -X POST "$CF_API/accounts/$CF_ACCOUNT_ID/access/apps/$aid/policies" \
+      --data "{\"name\":\"only-scott\",\"decision\":\"allow\",\"include\":[{\"email\":{\"email\":\"$TRAIL_ACCESS_EMAIL\"}}]}" >/dev/null
+  fi
+  echo "$aid"
+}
+
+# Delete an Access app by id (best-effort).
+cf_access_delete() { # $1=app_id
+  _cf_env
+  [[ -n "${CLOUDFLARE_API_TOKEN:-}" && -n "${1:-}" ]] || return 0
+  curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+    -X DELETE "$CF_API/accounts/$CF_ACCOUNT_ID/access/apps/$1" >/dev/null
+}
+
 # Regenerate the tunnel ingress from the registry and (best-effort) reload.
 # Safe to call before Cloudflare is set up: it writes the config and skips the
 # reload when no `trail` tunnel/credentials exist yet.

@@ -25,7 +25,9 @@ up() {
   fi
 
   read -r BP FP < <(ports_for "$name")
-  local host="$name.t.oursilverfamily.com"
+  # Single-level host so free Universal SSL covers it (a *.t. wildcard would
+  # need paid Advanced Certificate Manager).
+  local host="trail-$name.oursilverfamily.com"
   mkdir -p "$SHARED/logs"
 
   # Force same-origin: empty VITE_API_URL so API_BASE == '' (relative /api),
@@ -43,8 +45,14 @@ up() {
     PORT="$FP" BACKEND_PORT="$BP" nohup npm run dev \
       >> "$SHARED/logs/$name.fe.log" 2>&1 & echo $! > "/tmp/trail-$name.fe" )
 
-  reg_set "$name" "$(printf '{"branch":"%s","backend_port":%d,"frontend_port":%d,"hostname":"%s","be_pid":%s,"fe_pid":%s}' \
-    "$branch" "$BP" "$FP" "$host" "$(cat "/tmp/trail-$name.be")" "$(cat "/tmp/trail-$name.fe")")"
+  # Public plumbing: DNS record + per-host Access app (allow only your email).
+  cf_route_dns "$host"
+  local aid; aid="$(cf_access_ensure "$host")"
+  [[ -n "$aid" ]] && echo "access: app $aid gates $host" \
+    || echo "access: WARNING no token -> $host is NOT gated (set trail-cf.env)"
+
+  reg_set "$name" "$(printf '{"branch":"%s","backend_port":%d,"frontend_port":%d,"hostname":"%s","access_app_id":"%s","be_pid":%s,"fe_pid":%s}' \
+    "$branch" "$BP" "$FP" "$host" "$aid" "$(cat "/tmp/trail-$name.be")" "$(cat "/tmp/trail-$name.fe")")"
   regen_ingress
   echo "UP  $name  https://$host  (frontend :$FP  backend :$BP)  logs: $SHARED/logs/$name.*.log"
 }
@@ -55,6 +63,10 @@ down() {
   for pid in $("$PY" -c 'import json,sys; i=json.loads(sys.argv[1]); print(i.get("be_pid",""), i.get("fe_pid",""))' "$info"); do
     [[ -n "$pid" ]] && kill "$pid" 2>/dev/null || true
   done
+  # Remove the per-host Access app (DNS CNAME is left; it 404s via the tunnel and
+  # deleting it would need a DNS-scoped token).
+  local aid; aid="$("$PY" -c 'import json,sys; print(json.loads(sys.argv[1]).get("access_app_id",""))' "$info")"
+  cf_access_delete "$aid"
   reg_del "$name"
   regen_ingress
   echo "DOWN $name"

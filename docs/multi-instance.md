@@ -4,7 +4,9 @@ Run several dev versions of the trail app at once. Each instance is a git
 worktree with its own live-reloading backend + frontend on a derived port pair.
 All instances share **one** copy of the expensive OSM/DEM caches, so OSM is
 fetched once, ever. Each instance is reachable privately at
-`https://<name>.t.oursilverfamily.com`, gated by Cloudflare Access to one email.
+`https://trail-<name>.oursilverfamily.com`, gated by Cloudflare Access to one
+email. (Single-level hosts so free Universal SSL covers them — a `*.t.` wildcard
+would need paid Advanced Certificate Manager.)
 
 ## One-time setup
 
@@ -34,8 +36,8 @@ defaults.
 In the dashboard, once: enable Zero Trust (pick a team name, free plan) and mint
 a **Custom API token** with a single scope — **Account → Access: Apps and
 Policies → Edit**, scoped to the `oursilverfamily` account. No Zone/DNS scope is
-needed: the wildcard DNS is created by `cloudflared` using its existing
-`cert.pem`, not the token. Then:
+needed: DNS records are created by `cloudflared` using its existing `cert.pem`,
+not the token. Then:
 
 ```bash
 cat > ~/development/trail-shared/trail-cf.env <<'EOF'
@@ -48,9 +50,9 @@ chmod 600 ~/development/trail-shared/trail-cf.env
 tools/trail-cf-setup.sh
 ```
 
-This creates the `trail` tunnel, the wildcard DNS record
-`*.t.oursilverfamily.com`, and one Access app + email policy. New instances need
-zero further Cloudflare changes.
+This just creates the `trail` tunnel. Each `trail-instance up` then creates that
+instance's DNS record (`trail-<name>.oursilverfamily.com`) and a per-host Access
+app + email policy automatically; `down` removes the Access app.
 
 **Login method:** the default One-time PIN needs no identity provider — Cloudflare
 emails a code to `TRAIL_ACCESS_EMAIL` and the session lasts 30 days. "Sign in with
