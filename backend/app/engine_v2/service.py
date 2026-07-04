@@ -220,5 +220,41 @@ class TrailFinderServiceV2:
         stats["engine"] = "v2"
         if warnings:
             stats["warnings"] = warnings
+        self._augment_client_stats(raw_path, stats)
         path = [Coordinate(lat=lat, lon=lon) for (lat, lon, _elev) in raw_path]
         return path, stats
+
+    def _augment_client_stats(self, raw_path, stats: dict) -> dict:
+        """Add v1-compatible stat keys so the frontend and GPX generator — which
+        read the v1 schema (distance_km, estimated_time_min, difficulty,
+        path_with_slopes) — render v2 routes correctly instead of showing
+        NaN/blank. The native v2 keys (distance_m, terrain_breakdown, ...) are
+        left intact."""
+        distance_km = round(stats.get("distance_m", 0.0) / 1000.0, 2)
+
+        path_with_slopes = []
+        max_slope = 0.0
+        for i, (lat, lon, elev) in enumerate(raw_path):
+            slope_deg = 0.0
+            if i > 0:
+                p_lat, p_lon, p_elev = raw_path[i - 1]
+                horiz_m = self._haversine_km(Coordinate(lat=p_lat, lon=p_lon), Coordinate(lat=lat, lon=lon)) * 1000.0
+                if horiz_m > 0:
+                    slope_deg = round(math.degrees(math.atan2(elev - p_elev, horiz_m)), 1)
+            max_slope = max(max_slope, abs(slope_deg))
+            path_with_slopes.append({"lat": lat, "lon": lon, "elevation": round(float(elev), 2), "slope": slope_deg})
+
+        stats["distance_km"] = distance_km
+        stats["estimated_time_min"] = int(distance_km * 15)  # ~4 km/h, matches v1
+        stats["max_slope"] = round(max_slope, 1)
+        stats["difficulty"] = self._difficulty(distance_km, max_slope)
+        stats["waypoints"] = len(raw_path)
+        stats["path_with_slopes"] = path_with_slopes
+        return stats
+
+    @staticmethod
+    def _difficulty(distance_km: float, max_slope: float) -> str:
+        """Distance+slope difficulty, matching v1's _estimate_difficulty_with_slope."""
+        base = 1 if distance_km < 3 else 2 if distance_km < 8 else 3
+        slope = 1 if max_slope < 10 else 2 if max_slope < 20 else 3
+        return {1: "easy", 2: "moderate", 3: "hard"}[max(base, slope)]
