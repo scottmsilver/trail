@@ -18,7 +18,9 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - run: npm ci
+      # npm install (not ci): the committed lockfile is accepted by newer npm
+      # but node 22 npm rejects its version; install tolerates the drift.
+      - run: npm install --no-audit --no-fund
       # tsc -b && vite build — fails on missing imports and type errors.
       - run: npm run build
 
