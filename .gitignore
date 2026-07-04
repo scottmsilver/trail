@@ -16,3 +16,24 @@ frontend/node_modules/
 
 # Personal preset seed (contains real addresses) — keep out of git
 frontend/src/config/presets.local.json
+
+# --- local envs, data & caches (never commit) ---
+/venv/
+dem_data_v2/
+path_cache_v2/
+backend/dem_data_v2/
+backend/path_cache_v2/
+*.db
+
+# --- superseded local rewrite (huge, local-only) ---
+/backend3/
+
+# --- foreign tooling scaffolding dropped into this repo (not trail's) ---
+/hooks/
+/indexing/
+/scripts/
+.secrets.baseline
+
+# --- private / local config ---
+CLAUDE.local.md
+CLAUDE.local.md.template
