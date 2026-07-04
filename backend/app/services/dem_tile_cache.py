@@ -23,7 +23,13 @@ from app.services.compressed_pathfinding import compress_search_space, Compresse
 from app.services.compressed_pathfinding_balanced import balanced_compress_search_space
 from app.services.preprocessing import PathfindingPreprocessor
 from app.services.tiled_dem_cache import TiledDEMCache
+from app.services.lru import BoundedLRUCache
 import time
+
+# Fallback (DEM-download) caches store whole-route composites of 100s of MB each.
+# Keep only a few recent routes so a burst of fallbacks stays bounded.
+FALLBACK_CACHE_MAX_ENTRIES = 4
+
 
 class DEMTileCache:
     def __init__(self, buffer=0.05, debug_mode=False, obstacle_config=None, path_preferences=None):
@@ -42,9 +48,12 @@ class DEMTileCache:
         self.obstacle_config = obstacle_config or ObstacleConfig()
         self.path_preferences = path_preferences or PathPreferences()
         self.preprocessor = PathfindingPreprocessor()
-        self.preprocessing_cache = {}  # Cache preprocessed data by tile bounds
-        self.terrain_cache = {}  # Cache downloaded terrain data
-        self.cost_surface_cache = {}  # Cache computed cost surfaces
+        # These only fill on the DEM-download fallback path (the tiled path
+        # doesn't touch them), but each entry is a whole-route composite of 100s
+        # of MB. Bound them to a handful of recent routes.
+        self.preprocessing_cache = BoundedLRUCache(FALLBACK_CACHE_MAX_ENTRIES)  # preprocessed by tile bounds
+        self.terrain_cache = BoundedLRUCache(FALLBACK_CACHE_MAX_ENTRIES)  # downloaded terrain
+        self.cost_surface_cache = BoundedLRUCache(FALLBACK_CACHE_MAX_ENTRIES)  # computed cost surfaces
         
         # Initialize tiled cache for cost surfaces
         self.tiled_cache = TiledDEMCache(tile_size_degrees=0.01)  # ~1km tiles
