@@ -191,7 +191,8 @@ function App() {
       // Use the route ID if it exists, otherwise use the export endpoint
       if (route.routeId && route.routeId !== 'debug') {
         // Download from existing route
-        const response = await fetch(`http://localhost:9001/api/routes/${route.routeId}/gpx`)
+        const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:9001'
+        const response = await fetch(`${apiBase}/api/routes/${route.routeId}/gpx`)
         if (!response.ok) {
           throw new Error('Failed to export GPX')
         }
@@ -262,7 +263,8 @@ function App() {
     setCacheProgress({ active: true, message: `Caching ~${approxAreaKm2.toFixed(1)} km² for current view...` })
 
     try {
-      const response = await fetch('http://localhost:9001/api/cache/prepopulate-box', {
+      const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:9001'
+      const response = await fetch(`${apiBase}/api/cache/prepopulate-box`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

@@ -190,7 +190,8 @@ const PrepopulateArea: React.FC<PrepopulateAreaProps> = ({ map, onClose }) => {
         setProgress((prev) => Math.min(prev + 10, 90));
       }, 1000);
 
-      const response = await fetch('http://localhost:9001/api/cache/prepopulate-box', {
+      const apiBase = import.meta.env.VITE_API_URL ?? 'http://localhost:9001'
+      const response = await fetch(`${apiBase}/api/cache/prepopulate-box`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

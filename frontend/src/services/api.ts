@@ -105,7 +105,7 @@ export interface CostPointResponse {
 export class TrailAPI {
   private client: AxiosInstance
 
-  constructor(baseURL: string = import.meta.env.VITE_API_URL || 'http://localhost:9001') {
+  constructor(baseURL: string = import.meta.env.VITE_API_URL ?? 'http://localhost:9001') {
     this.client = axios.create({
       baseURL,
       headers: {
