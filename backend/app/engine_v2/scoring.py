@@ -12,6 +12,16 @@ from typing import Dict, List, Tuple
 
 _FACTOR_KEYS = ("base", "terrain", "slope", "sustained", "deviation")
 
+# Impassable moves (slope > max) cost +inf, and NaN DEM cells would poison the
+# sum. Neither survives JSON (Infinity/NaN aren't valid JSON and break JS
+# parsers), so we map them to a large finite sentinel that still ranks an
+# impassable path as the worst option.
+_IMPASSABLE = 1e18
+
+
+def _finite(x: float) -> float:
+    return x if math.isfinite(x) else _IMPASSABLE
+
 
 def rasterize_segment(r0: int, c0: int, r1: int, c1: int) -> List[Tuple[int, int]]:
     """All grid cells a segment passes through, contiguous with 8-connected steps.
@@ -73,7 +83,10 @@ def score_polyline_cells(
         delta_elev = float(pf.elevation[r1, c1]) - float(pf.elevation[r0, c0])
         if delta_elev > 0:
             egain += delta_elev
-    return {"total": total, "factors": factors, "distance": dist, "egain": egain, "steep": steep}
+    # Keep the result JSON-serializable even for impassable/NaN moves.
+    total = _finite(total)
+    factors = {k: _finite(v) for k, v in factors.items()}
+    return {"total": total, "factors": factors, "distance": _finite(dist), "egain": _finite(egain), "steep": steep}
 
 
 def dominant_factor(factors: Dict[str, float]) -> str:

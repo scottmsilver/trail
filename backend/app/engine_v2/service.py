@@ -29,6 +29,11 @@ from app.models.route import Coordinate
 logger = logging.getLogger(__name__)
 
 
+# Upper bound on drawn-path vertices, to cap the O(vertices) scoring/snapping
+# work an eval request can trigger.
+MAX_PATH_POINTS = 2000
+
+
 class TrailFinderServiceV2:
     def __init__(
         self,
@@ -231,23 +236,39 @@ class TrailFinderServiceV2:
 
     def _trail_lines_sync(self, path: List[Coordinate], options: dict):
         options = options or {}
-        sw = Coordinate(lat=min(p.lat for p in path), lon=min(p.lon for p in path))
-        ne = Coordinate(lat=max(p.lat for p in path), lon=max(p.lon for p in path))
+        sw, ne = self._validate_path_extent(path)
         bounds = self.calculate_bounding_box(sw, ne, options.get("buffer"))
         with self._data_lock:
             return self.path_layer.get_trail_lines(bounds)
 
-    def _score_path_sync(self, path: List[Coordinate], options: dict) -> ScoredPath:
-        options = options or {}
+    def _validate_path_extent(self, path: List[Coordinate]):
+        """Reject degenerate/oversized polylines before we allocate a grid for
+        them (guards against OOM from a huge bounding box or vertex count)."""
         if len(path) < 2:
             raise ValueError("path needs at least two points")
-        # Bounding box covering the whole polyline (plus the usual buffer).
+        if len(path) > MAX_PATH_POINTS:
+            raise ValueError(f"path has too many points ({len(path)} > {MAX_PATH_POINTS})")
         sw = Coordinate(lat=min(p.lat for p in path), lon=min(p.lon for p in path))
         ne = Coordinate(lat=max(p.lat for p in path), lon=max(p.lon for p in path))
+        span_km = self._haversine_km(sw, ne)
+        if span_km > self.max_distance_km:
+            raise ValueError(f"path extent {span_km:.1f} km exceeds max {self.max_distance_km} km")
+        return sw, ne
+
+    def _score_path_sync(self, path: List[Coordinate], options: dict) -> ScoredPath:
+        options = options or {}
+        sw, ne = self._validate_path_extent(path)
+        # Bounding box covering the whole polyline (plus the usual buffer).
         bounds = self.calculate_bounding_box(sw, ne, options.get("buffer"))
         pf, _warnings = self._load_pathfinder(bounds, options)
 
-        verts = [pf.lat_lon_to_grid(p.lat, p.lon) for p in path]
+        # Clamp vertices into the grid: a point on the bbox max edge truncates to
+        # index == shape, and numpy would wrap a negative index into a wrong cost.
+        def _clamp(rc):
+            r, c = rc
+            return (min(max(r, 0), pf.rows - 1), min(max(c, 0), pf.cols - 1))
+
+        verts = [_clamp(pf.lat_lon_to_grid(p.lat, p.lon)) for p in path]
         # Deviation penalty is measured against the whole-path straight line —
         # the same reference the engine's optimal path is scored against.
         sld = pf.resolution * math.sqrt((verts[0][0] - verts[-1][0]) ** 2 + (verts[0][1] - verts[-1][1]) ** 2)

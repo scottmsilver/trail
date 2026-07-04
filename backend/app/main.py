@@ -734,9 +734,12 @@ async def score_path_endpoint(request: ScorePathRequest):
         return result
     except HTTPException:
         raise
+    except ValueError as e:
+        # Rejected input (too many points, extent too large, degenerate path).
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Error scoring path: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="internal error scoring path")
 
 
 @app.get("/api/eval/cases", response_model=list[EvalCase])

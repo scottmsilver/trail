@@ -54,7 +54,9 @@ def snap_polyline_to_lines(
     """
     if not trail_lines:
         return list(path), False
-    lat0 = path[0].lat
+    # Clamp the projection reference latitude away from the poles, where the
+    # equirectangular cos(lat) factor becomes numerically ill-conditioned.
+    lat0 = max(-89.9, min(89.9, path[0].lat))
     snapped: List[Coordinate] = []
     did = False
     for pt in path:
