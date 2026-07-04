@@ -17,7 +17,6 @@ import heapq
 import logging
 import math
 import time
-from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -37,22 +36,48 @@ DEFAULT_TERRAIN_COSTS = {
 }
 
 
-@dataclass
 class TerrainNode:
-    """Node in the pathfinding graph with terrain awareness"""
+    """Node in the pathfinding graph with terrain awareness.
 
-    row: int
-    col: int
-    g_cost: float  # Cost from start
-    h_cost: float  # Heuristic cost to goal
-    parent: Optional["TerrainNode"] = None
-    elevation: float = 0
-    terrain_type: int = PathType.UNKNOWN
-    consecutive_steep_distance: float = 0  # For sustained slope tracking
+    Plain __slots__ class (not a dataclass) with f_cost precomputed at
+    construction: the A* heap comparison used to invoke the f_cost @property
+    twice per comparison, and heapq does O(log n) comparisons per push/pop over
+    hundreds of thousands of nodes. __slots__ also speeds attribute access and
+    cuts per-node memory.
+    """
 
-    @property
-    def f_cost(self) -> float:
-        return self.g_cost + self.h_cost
+    __slots__ = (
+        "row",
+        "col",
+        "g_cost",
+        "h_cost",
+        "f_cost",
+        "parent",
+        "elevation",
+        "terrain_type",
+        "consecutive_steep_distance",
+    )
+
+    def __init__(
+        self,
+        row,
+        col,
+        g_cost,
+        h_cost,
+        parent=None,
+        elevation=0,
+        terrain_type=PathType.UNKNOWN,
+        consecutive_steep_distance=0,
+    ):
+        self.row = row
+        self.col = col
+        self.g_cost = g_cost
+        self.h_cost = h_cost
+        self.f_cost = g_cost + h_cost
+        self.parent = parent
+        self.elevation = elevation
+        self.terrain_type = terrain_type
+        self.consecutive_steep_distance = consecutive_steep_distance
 
     def __lt__(self, other):
         return self.f_cost < other.f_cost
