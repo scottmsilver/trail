@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# Launch / stop / list dev instances of the trail app. Each instance is a git
+# worktree with its own backend+frontend on a derived port pair, all sharing the
+# one cache, and reachable at https://<name>.t.oursilverfamily.com behind
+# Cloudflare Access. See docs/multi-instance.md.
+set -euo pipefail
+
+HERE="$(cd "$(dirname "$0")" && pwd)"
+source "$HERE/lib/trail-registry.sh"
+# shellcheck disable=SC1091
+source "$SHARED/trail-shared.env"
+
+PY=/home/ssilver/development/trail/trail_env/bin/python
+UVICORN_PY="$PY"
+
+cmd="${1:-}"; name="${2:-}"
+
+up() {
+  local name="$1"
+  local branch="${2:-worktree-$name}"
+  local wt="$MAIN/.claude/worktrees/$name"
+  if [[ ! -d "$wt" ]]; then
+    git -C "$MAIN" worktree add "$wt" -b "$branch" 2>/dev/null \
+      || git -C "$MAIN" worktree add "$wt" "$branch"
+  fi
+
+  read -r BP FP < <(ports_for "$name")
+  local host="$name.t.oursilverfamily.com"
+  mkdir -p "$SHARED/logs"
+
+  # Force same-origin: empty VITE_API_URL so API_BASE == '' (relative /api),
+  # which Vite proxies to this instance's backend. Overrides the pinned
+  # frontend/.env without editing tracked files.
+  printf 'VITE_API_URL=\n' > "$wt/frontend/.env.local"
+
+  # Backend (uvicorn --reload) under the shared cache env.
+  ( cd "$wt/backend" && PYTHONPATH=. nohup "$UVICORN_PY" -m uvicorn app.main:app \
+      --reload --port "$BP" >> "$SHARED/logs/$name.be.log" 2>&1 & echo $! > "/tmp/trail-$name.be" )
+
+  # Frontend (vite) proxying /api -> backend.
+  ( cd "$wt/frontend"
+    [[ -d node_modules ]] || npm install
+    PORT="$FP" BACKEND_PORT="$BP" nohup npm run dev \
+      >> "$SHARED/logs/$name.fe.log" 2>&1 & echo $! > "/tmp/trail-$name.fe" )
+
+  reg_set "$name" "$(printf '{"branch":"%s","backend_port":%d,"frontend_port":%d,"hostname":"%s","be_pid":%s,"fe_pid":%s}' \
+    "$branch" "$BP" "$FP" "$host" "$(cat "/tmp/trail-$name.be")" "$(cat "/tmp/trail-$name.fe")")"
+  regen_ingress
+  echo "UP  $name  https://$host  (frontend :$FP  backend :$BP)  logs: $SHARED/logs/$name.*.log"
+}
+
+down() {
+  local name="$1" info
+  info="$(reg_get "$name")"
+  for pid in $("$PY" -c 'import json,sys; i=json.loads(sys.argv[1]); print(i.get("be_pid",""), i.get("fe_pid",""))' "$info"); do
+    [[ -n "$pid" ]] && kill "$pid" 2>/dev/null || true
+  done
+  reg_del "$name"
+  regen_ingress
+  echo "DOWN $name"
+}
+
+list() {
+  "$PY" - "$REG" <<'PY'
+import json, sys
+reg = json.load(open(sys.argv[1]))
+if not reg:
+    print("(no instances)"); sys.exit()
+w = max([len(k) for k in reg] + [4])
+print(f'{"NAME":<{w}}  FRONT  BACK   URL')
+for n, i in reg.items():
+    print(f'{n:<{w}}  {i["frontend_port"]:<5}  {i["backend_port"]:<5}  https://{i["hostname"]}')
+PY
+}
+
+case "$cmd" in
+  up)   [[ -n "$name" ]] || { echo "usage: trail-instance up <name> [branch]"; exit 1; }; up "$name" "${3:-}";;
+  down) [[ -n "$name" ]] || { echo "usage: trail-instance down <name>"; exit 1; }; down "$name";;
+  list) list;;
+  *) echo "usage: trail-instance {up <name> [branch] | down <name> | list}"; exit 1;;
+esac
