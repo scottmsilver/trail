@@ -1,0 +1,20 @@
+[flake8]
+max-line-length = 120
+# Lenient by design: this is a research/CLI codebase with legacy and
+# conditionally-imported (e.g. matplotlib) code paths. Style + undefined-name +
+# unused-import/var noise is ignored; real logic is guarded by tests + bandit.
+extend-ignore = E203, W503, E501, E402, E722, E741, E265, E266, E731, E711, E712,
+    E128, E129, E305, E302, E306, W291, W293, W292,
+    F401, F403, F405, F811, F841, F821, F541
+exclude =
+    .git,
+    __pycache__,
+    venv,
+    trail_env,
+    node_modules,
+    backend3,
+    build,
+    dist,
+    *.egg-info,
+    .pytest_cache,
+    .mypy_cache

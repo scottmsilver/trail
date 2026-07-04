@@ -1,0 +1,106 @@
+# Trail project pre-commit hooks (trail-native, minimal).
+# Replaces a foreign music-project scaffolding that had been dropped into this repo.
+repos:
+- repo: https://github.com/pre-commit/pre-commit-hooks
+  rev: v4.5.0
+  hooks:
+  - id: trailing-whitespace
+  - id: end-of-file-fixer
+  - id: check-yaml
+    args: [--unsafe]
+  - id: check-added-large-files
+    args: [--maxkb=1000]
+  - id: check-case-conflict
+  - id: check-merge-conflict
+  - id: check-json
+  - id: check-toml
+  - id: debug-statements
+  - id: detect-private-key
+  - id: mixed-line-ending
+    args: [--fix=lf]
+- repo: https://github.com/pycqa/flake8
+  rev: 7.0.0
+  hooks:
+  - id: flake8
+    args: [--config=.flake8]
+    verbose: true
+- repo: https://github.com/PyCQA/bandit
+  rev: 1.8.0
+  hooks:
+  - id: bandit
+    # skip B301/B403: pickle is used only for the app's own local tile cache
+    args: [-ll, --skip, B301,B403]
+    verbose: true
+- repo: https://github.com/pre-commit/pygrep-hooks
+  rev: v1.10.0
+  hooks:
+  - id: python-check-blanket-type-ignore
+  - id: python-check-blanket-noqa
+- repo: https://github.com/shellcheck-py/shellcheck-py
+  rev: v0.10.0.1
+  hooks:
+  - id: shellcheck
+    args: [--severity=warning, --exclude=SC1091]
+- repo: local
+  hooks:
+  # Library code (backend/app) must use logging, not print(); CLI scripts, tests
+  # and debug/ are allowed prints.
+  - id: no-print-statements
+    name: No print() in backend/app (use logging)
+    entry: ^\s*print\(
+    language: pygrep
+    files: ^backend/app/.*\.py$
+    exclude: .*test.*\.py
+    verbose: true
+  - id: no-assert-statements
+    name: No assert in backend/app (raise explicit errors)
+    entry: \bassert\s+
+    language: pygrep
+    files: ^backend/app/.*\.py$
+    exclude: .*test.*\.py
+    verbose: true
+  - id: no-breakpoints
+    name: No debugging breakpoints
+    entry: (breakpoint\(\)|import pdb|pdb\.set_trace|import ipdb|ipdb\.set_trace)
+    language: pygrep
+    types: [python]
+  - id: check-eval-usage
+    name: No eval()
+    entry: \beval\s*\(
+    language: pygrep
+    types: [python]
+    exclude: (/tests/|.*test.*\.py)
+  - id: check-exec-usage
+    name: No exec()
+    entry: \bexec\s*\(
+    language: pygrep
+    types: [python]
+    exclude: (/tests/|.*test.*\.py)
+- repo: local
+  hooks:
+  - id: project-tests
+    name: Project Test Suite
+    entry: ./run_tests.sh
+    language: system
+    types: [python]
+    pass_filenames: false
+    verbose: true
+- repo: https://github.com/compilerla/conventional-pre-commit
+  rev: v3.0.0
+  hooks:
+  - id: conventional-pre-commit
+    stages: [commit-msg]
+    args: []
+default_language_version:
+  python: python3
+exclude: |
+  (?x)^(
+    \.git/|
+    venv/|
+    trail_env/|
+    __pycache__/|
+    node_modules/|
+    backend3/|
+    .*\.min\.js|
+    .*\.min\.css
+  )
