@@ -106,16 +106,16 @@ const AlgorithmDebug: React.FC<AlgorithmDebugProps> = ({ debugData, onClose }) =
   const { explored_nodes, decision_points, grid_exploration } = debugData;
 
   const renderGridVisualization = () => {
-    const { shape, explored, in_path, g_scores, f_scores } = grid_exploration;
+    const { shape, explored, in_path, g_scores } = grid_exploration;
     const [rows, cols] = shape;
-    
+
     // Debug: Count in_path cells
     const inPathCount = in_path.flat().filter(Boolean).length;
     console.log(`Grid view - in_path cells: ${inPathCount}`);
-    
+
     // Sample the grid for visualization (too large to render every cell)
     const sampleRate = Math.max(1, Math.floor(Math.max(rows, cols) / 100));
-    
+
     return (
       <div className="grid-visualization">
         <div className="grid-controls">
@@ -123,8 +123,8 @@ const AlgorithmDebug: React.FC<AlgorithmDebugProps> = ({ debugData, onClose }) =
             Sample Rate: 1 in {sampleRate} cells
           </label>
         </div>
-        <div 
-          className="debug-grid" 
+        <div
+          className="debug-grid"
           style={{
             gridTemplateColumns: `repeat(${Math.ceil(cols / sampleRate)}, 8px)`,
             gridTemplateRows: `repeat(${Math.ceil(rows / sampleRate)}, 8px)`
@@ -134,17 +134,17 @@ const AlgorithmDebug: React.FC<AlgorithmDebugProps> = ({ debugData, onClose }) =
             Array.from({ length: Math.ceil(cols / sampleRate) }, (_, c) => {
               const actualRow = r * sampleRate;
               const actualCol = c * sampleRate;
-              
+
               if (actualRow >= rows || actualCol >= cols) return null;
-              
+
               const isExplored = explored[actualRow]?.[actualCol];
               const isInPath = in_path[actualRow]?.[actualCol];
               const gScore = g_scores[actualRow]?.[actualCol];
-              
+
               let className = 'grid-cell';
               if (isInPath) className += ' in-path';
               else if (isExplored) className += ' explored';
-              
+
               return (
                 <div
                   key={`${r}-${c}`}
@@ -161,7 +161,7 @@ const AlgorithmDebug: React.FC<AlgorithmDebugProps> = ({ debugData, onClose }) =
 
   // Helper function to find decision at a specific cell
   const getDecisionAtCell = (row: number, col: number): DecisionPoint | null => {
-    return decision_points.find(dp => 
+    return decision_points.find(dp =>
       dp.current_node.row === row && dp.current_node.col === col
     ) || null;
   };
@@ -172,7 +172,7 @@ const AlgorithmDebug: React.FC<AlgorithmDebugProps> = ({ debugData, onClose }) =
     evaluation: NeighborEvaluation;
   }> => {
     const evaluations: Array<{fromDecision: DecisionPoint; evaluation: NeighborEvaluation}> = [];
-    
+
     decision_points.forEach(dp => {
       const neighborEval = dp.neighbors_evaluated.find(
         n => n.row === row && n.col === col
@@ -181,7 +181,7 @@ const AlgorithmDebug: React.FC<AlgorithmDebugProps> = ({ debugData, onClose }) =
         evaluations.push({ fromDecision: dp, evaluation: neighborEval });
       }
     });
-    
+
     return evaluations;
   };
 
@@ -189,11 +189,11 @@ const AlgorithmDebug: React.FC<AlgorithmDebugProps> = ({ debugData, onClose }) =
     const { shape, explored, in_path, g_scores, f_scores } = grid_exploration;
     const [rows, cols] = shape;
     const sampleRate = Math.max(1, Math.floor(Math.max(rows, cols) / 80)); // Finer resolution for integrated view
-    
+
     // Debug: Count in_path cells
     const inPathCount = in_path.flat().filter(Boolean).length;
     console.log(`Debug: Total in_path cells: ${inPathCount}, Grid: ${rows}x${cols}, Sample rate: ${sampleRate}`);
-    
+
     // Find actual in_path cell indices for debugging
     if (inPathCount > 0) {
       const pathIndices: [number, number][] = [];
@@ -206,17 +206,17 @@ const AlgorithmDebug: React.FC<AlgorithmDebugProps> = ({ debugData, onClose }) =
       }
       console.log('First 5 in_path cells:', pathIndices.slice(0, 5));
     }
-    
+
     // Get cell info for selected or hovered cell
     const activeCellInfo = selectedCell || hoveredCell;
     let cellDecision: DecisionPoint | null = null;
     let cellEvaluations: Array<{fromDecision: DecisionPoint; evaluation: NeighborEvaluation}> = [];
-    
+
     if (activeCellInfo) {
       cellDecision = getDecisionAtCell(activeCellInfo.row, activeCellInfo.col);
       cellEvaluations = getNeighborEvaluations(activeCellInfo.row, activeCellInfo.col);
     }
-    
+
     return (
       <div className="integrated-view">
         <div className="integrated-grid-section">
@@ -228,9 +228,9 @@ const AlgorithmDebug: React.FC<AlgorithmDebugProps> = ({ debugData, onClose }) =
               </span>
             )}
           </div>
-          
-          <div 
-            className="integrated-grid" 
+
+          <div
+            className="integrated-grid"
             style={{
               gridTemplateColumns: `repeat(${Math.ceil(cols / sampleRate)}, 12px)`,
               gridTemplateRows: `repeat(${Math.ceil(rows / sampleRate)}, 12px)`
@@ -240,29 +240,29 @@ const AlgorithmDebug: React.FC<AlgorithmDebugProps> = ({ debugData, onClose }) =
               Array.from({ length: Math.ceil(cols / sampleRate) }, (_, c) => {
                 const actualRow = r * sampleRate;
                 const actualCol = c * sampleRate;
-                
+
                 if (actualRow >= rows || actualCol >= cols) return null;
-                
+
                 const isExplored = explored[actualRow]?.[actualCol];
                 const isInPath = in_path[actualRow]?.[actualCol];
                 const gScore = g_scores[actualRow]?.[actualCol];
                 const fScore = f_scores[actualRow]?.[actualCol];
                 const hasDecision = getDecisionAtCell(actualRow, actualCol) !== null;
                 const wasEvaluated = getNeighborEvaluations(actualRow, actualCol).length > 0;
-                
+
                 let className = 'integrated-cell';
                 if (isInPath) className += ' in-path';
                 else if (isExplored) className += ' explored';
                 if (hasDecision) className += ' has-decision';
                 if (wasEvaluated && !isInPath) className += ' was-evaluated';
-                
+
                 if (selectedCell?.row === actualRow && selectedCell?.col === actualCol) {
                   className += ' selected';
                 }
                 if (hoveredCell?.row === actualRow && hoveredCell?.col === actualCol) {
                   className += ' hovered';
                 }
-                
+
                 return (
                   <div
                     key={`${r}-${c}`}
@@ -278,7 +278,7 @@ const AlgorithmDebug: React.FC<AlgorithmDebugProps> = ({ debugData, onClose }) =
               })
             )}
           </div>
-          
+
           <div className="grid-legend">
             <div className="legend-item">
               <div className="legend-color in-path"></div>
@@ -298,7 +298,7 @@ const AlgorithmDebug: React.FC<AlgorithmDebugProps> = ({ debugData, onClose }) =
             </div>
           </div>
         </div>
-        
+
         <div className="integrated-details-section">
           {activeCellInfo && (
             <>
@@ -310,7 +310,7 @@ const AlgorithmDebug: React.FC<AlgorithmDebugProps> = ({ debugData, onClose }) =
                     <div>Evaluated {cellDecision.neighbors_evaluated.length} neighbors</div>
                     <div>Chose {cellDecision.chosen_neighbors.length} improvement(s)</div>
                   </div>
-                  
+
                   <h5>Choices Made:</h5>
                   <div className="mini-neighbors">
                     {cellDecision.chosen_neighbors.map((neighbor, idx) => (
@@ -323,7 +323,7 @@ const AlgorithmDebug: React.FC<AlgorithmDebugProps> = ({ debugData, onClose }) =
                   </div>
                 </div>
               )}
-              
+
               {cellEvaluations.length > 0 && (
                 <div className="cell-evaluation-info">
                   <h4>This Cell Was Evaluated {cellEvaluations.length} Time(s)</h4>
@@ -340,8 +340,8 @@ const AlgorithmDebug: React.FC<AlgorithmDebugProps> = ({ debugData, onClose }) =
                         </div>
                         {!evalInfo.evaluation.is_improvement && (
                           <div className="rejection-reason">
-                            G-Score: {evalInfo.evaluation.g_score_breakdown.tentative_g_score.toFixed(1)} 
-                            {evalInfo.evaluation.current_g_score < Infinity && 
+                            G-Score: {evalInfo.evaluation.g_score_breakdown.tentative_g_score.toFixed(1)}
+                            {evalInfo.evaluation.current_g_score < Infinity &&
                               ` (current: ${evalInfo.evaluation.current_g_score.toFixed(1)})`
                             }
                           </div>
@@ -354,7 +354,7 @@ const AlgorithmDebug: React.FC<AlgorithmDebugProps> = ({ debugData, onClose }) =
                   ))}
                 </div>
               )}
-              
+
               {!cellDecision && cellEvaluations.length === 0 && (
                 <div className="no-cell-info">
                   <p>This cell was not a decision point and was not evaluated as a neighbor.</p>
@@ -368,7 +368,7 @@ const AlgorithmDebug: React.FC<AlgorithmDebugProps> = ({ debugData, onClose }) =
               )}
             </>
           )}
-          
+
           {!activeCellInfo && (
             <div className="help-text">
               <p>Click on any cell in the grid to see:</p>
@@ -393,13 +393,13 @@ const AlgorithmDebug: React.FC<AlgorithmDebugProps> = ({ debugData, onClose }) =
           <br />
           <strong>Coordinates:</strong> {decision.current_node.lat_lon[0].toFixed(6)}, {decision.current_node.lat_lon[1].toFixed(6)}
         </div>
-        
+
         <div className="neighbors">
           <h5>Neighbors Evaluated ({decision.neighbors_evaluated.length}):</h5>
           <div className="neighbors-grid">
             {decision.neighbors_evaluated.map((neighbor, idx) => (
-              <div 
-                key={idx} 
+              <div
+                key={idx}
                 className={`neighbor ${neighbor.is_improvement ? 'improvement' : 'no-improvement'}`}
               >
                 <div className="neighbor-header">
@@ -408,7 +408,7 @@ const AlgorithmDebug: React.FC<AlgorithmDebugProps> = ({ debugData, onClose }) =
                   </div>
                   {neighbor.is_improvement && <div className="improvement-indicator">✓ Chosen</div>}
                 </div>
-                
+
                 <div className="neighbor-details">
                   <div className="terrain-info">
                     <strong>Terrain:</strong>
@@ -417,7 +417,7 @@ const AlgorithmDebug: React.FC<AlgorithmDebugProps> = ({ debugData, onClose }) =
                     <div>Slope: {neighbor.slope_degrees.toFixed(1)}°</div>
                     {neighbor.terrain_breakdown.is_obstacle && <div className="obstacle-warning">⚠️ Obstacle</div>}
                   </div>
-                  
+
                   <div className="cost-breakdown">
                     <strong>Cost Breakdown:</strong>
                     <div>Base: {neighbor.terrain_breakdown.base_cost.toFixed(2)}</div>
@@ -425,17 +425,17 @@ const AlgorithmDebug: React.FC<AlgorithmDebugProps> = ({ debugData, onClose }) =
                     <div>Total terrain: {neighbor.terrain_breakdown.total_terrain_cost.toFixed(2)}</div>
                     <div className="formula">{neighbor.cost_breakdown.explanation}</div>
                   </div>
-                  
+
                   <div className="score-breakdown">
                     <strong>G-Score:</strong>
                     <div className="formula">{neighbor.g_score_breakdown.explanation}</div>
-                    
+
                     <strong>F-Score:</strong>
                     <div className="formula">{neighbor.f_score_breakdown.explanation}</div>
-                    
+
                     <div className="score-summary">
-                      G: {neighbor.g_score_breakdown.tentative_g_score.toFixed(2)} | 
-                      H: {neighbor.f_score_breakdown.h_score.toFixed(2)} | 
+                      G: {neighbor.g_score_breakdown.tentative_g_score.toFixed(2)} |
+                      H: {neighbor.f_score_breakdown.h_score.toFixed(2)} |
                       F: {neighbor.f_score_breakdown.f_score.toFixed(2)}
                     </div>
                   </div>
@@ -458,25 +458,25 @@ const AlgorithmDebug: React.FC<AlgorithmDebugProps> = ({ debugData, onClose }) =
 
         <div className="debug-controls">
           <div className="view-modes">
-            <button 
+            <button
               className={viewMode === 'overview' ? 'active' : ''}
               onClick={() => setViewMode('overview')}
             >
               Overview
             </button>
-            <button 
+            <button
               className={viewMode === 'grid' ? 'active' : ''}
               onClick={() => setViewMode('grid')}
             >
               Grid Exploration
             </button>
-            <button 
+            <button
               className={viewMode === 'decisions' ? 'active' : ''}
               onClick={() => setViewMode('decisions')}
             >
               Decision Points
             </button>
-            <button 
+            <button
               className={viewMode === 'integrated' ? 'active' : ''}
               onClick={() => setViewMode('integrated')}
             >
@@ -487,7 +487,7 @@ const AlgorithmDebug: React.FC<AlgorithmDebugProps> = ({ debugData, onClose }) =
           {viewMode === 'decisions' && (
             <div className="step-controls">
               <label>
-                Step: 
+                Step:
                 <input
                   type="range"
                   min="0"
@@ -520,7 +520,7 @@ const AlgorithmDebug: React.FC<AlgorithmDebugProps> = ({ debugData, onClose }) =
                   } / {grid_exploration.shape[0] * grid_exploration.shape[1]}
                 </div>
               </div>
-              
+
               <div className="algorithm-summary">
                 <h4>Algorithm Process:</h4>
                 <ol>

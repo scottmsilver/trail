@@ -85,6 +85,17 @@ repos:
     types: [python]
     pass_filenames: false
     verbose: true
+  # Catches missing/renamed imports (Cannot find module ...) and type errors
+  # in the frontend before a commit. vite dev uses esbuild and does NOT
+  # typecheck, so tsc --noEmit is the only gate. Runs only on frontend TS/TSX
+  # changes; tsc needs the whole project, so no filenames are passed.
+  - id: frontend-typecheck
+    name: Frontend typecheck (tsc --noEmit)
+    entry: bash -c 'cd frontend && npm run typecheck'
+    language: system
+    files: ^frontend/.*\.(ts|tsx)$
+    pass_filenames: false
+    verbose: true
 - repo: https://github.com/compilerla/conventional-pre-commit
   rev: v3.0.0
   hooks:

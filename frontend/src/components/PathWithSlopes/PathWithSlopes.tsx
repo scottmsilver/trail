@@ -1,6 +1,7 @@
-import React, { useState } from 'react'
+import { useState } from 'react'
+import type { ReactElement } from 'react'
 import { Polyline, Tooltip } from 'react-leaflet'
-import { LatLngExpression } from 'leaflet'
+import type { LatLngExpression } from 'leaflet'
 import './PathWithSlopes.css'
 
 interface PathPoint {
@@ -18,7 +19,7 @@ interface PathWithSlopesProps {
 
 function getSegmentColor(slope: number): string {
   const absSlope = Math.abs(slope)
-  
+
   if (absSlope < 5) {
     return '#2ecc71' // Green - easy
   } else if (absSlope < 10) {
@@ -36,7 +37,7 @@ function getSegmentColor(slope: number): string {
 
 function getSlopeDifficulty(slope: number): string {
   const absSlope = Math.abs(slope)
-  
+
   if (absSlope < 5) return 'Easy'
   if (absSlope < 10) return 'Moderate'
   if (absSlope < 15) return 'Challenging'
@@ -47,7 +48,7 @@ function getSlopeDifficulty(slope: number): string {
 
 function getPathTypeName(pathType?: string): string {
   if (!pathType) return 'Unknown'
-  
+
   const pathTypeNames: { [key: string]: string } = {
     'trail': 'Trail',
     'path': 'Path',
@@ -56,16 +57,16 @@ function getPathTypeName(pathType?: string): string {
     'residential': 'Street',
     'off_path': 'Off-trail',
   }
-  
+
   return pathTypeNames[pathType] || pathType.charAt(0).toUpperCase() + pathType.slice(1)
 }
 
 export default function PathWithSlopes({ path, pathWithSlopes }: PathWithSlopesProps) {
-  const [showLegend, setShowLegend] = useState(true)
-  
+  const [showLegend] = useState(true)
+
   // Use pathWithSlopes if available, otherwise use regular path
   const dataPath = pathWithSlopes || path
-  
+
   if (!dataPath || dataPath.length < 2) {
     return null
   }
@@ -84,21 +85,21 @@ export default function PathWithSlopes({ path, pathWithSlopes }: PathWithSlopesP
   }
 
   // Render path segments with slope colors
-  const segments: JSX.Element[] = []
-  
+  const segments: ReactElement[] = []
+
   for (let i = 0; i < pathWithSlopes.length - 1; i++) {
     const start = pathWithSlopes[i]
     const end = pathWithSlopes[i + 1]
     const slope = start.slope || 0
-    
+
     const segmentPath: LatLngExpression[] = [
       [start.lat, start.lon],
       [end.lat, end.lon]
     ]
-    
+
     const color = getSegmentColor(slope)
     const difficulty = getSlopeDifficulty(slope)
-    
+
     segments.push(
       <Polyline
         key={i}
