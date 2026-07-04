@@ -1,6 +1,11 @@
 import axios from 'axios'
 import type { AxiosInstance } from 'axios'
 
+// Single source for the API base. Prefer the build-time VITE_API_URL; an
+// explicit empty string means "same origin" (relative), for single-origin
+// serving. Falls back to the dev backend only when the var is unset.
+export const API_BASE: string = import.meta.env.VITE_API_URL ?? 'http://localhost:9001'
+
 export interface Coordinate {
   lat: number
   lon: number
@@ -105,7 +110,7 @@ export interface CostPointResponse {
 export class TrailAPI {
   private client: AxiosInstance
 
-  constructor(baseURL: string = import.meta.env.VITE_API_URL ?? 'http://localhost:9001') {
+  constructor(baseURL: string = API_BASE) {
     this.client = axios.create({
       baseURL,
       headers: {

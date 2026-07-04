@@ -5,14 +5,15 @@ from datetime import datetime, timezone
 from typing import Dict
 
 import numpy as np
+from fastapi import BackgroundTasks, FastAPI, HTTPException, status
+from fastapi.middleware.cors import CORSMiddleware
+
 from app.engine_v2.service import TrailFinderServiceV2
 from app.models.route import RouteRequest, RouteResponse, RouteResult, RouteStatus, RouteStatusResponse
 from app.services.dem_tile_cache import DEMTileCache
 from app.services.obstacle_config import ObstaclePresets
 from app.services.path_preferences import PathPreferencePresets, PathPreferences
 from app.services.trail_finder import TrailFinderService
-from fastapi import BackgroundTasks, FastAPI, HTTPException, status
-from fastapi.middleware.cors import CORSMiddleware
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -328,46 +329,12 @@ async def get_route(route_id: str):
     )
 
 
-# --- Static frontend (single-origin demo serving) -------------------------
-# If FRONTEND_DIST points at a built Vite `dist/` directory, serve the SPA
-# from the same origin as the API so a single tunnel can serve both. This is
-# registered LAST so all /api routes take precedence.
-_frontend_dist = os.environ.get("FRONTEND_DIST")
-if _frontend_dist and os.path.isdir(_frontend_dist):
-    from fastapi.responses import FileResponse
-    from fastapi.staticfiles import StaticFiles
-
-    _index_file = os.path.join(_frontend_dist, "index.html")
-
-    # Serve built static assets (JS/CSS/images) under /assets etc.
-    app.mount("/assets", StaticFiles(directory=os.path.join(_frontend_dist, "assets")), name="assets")
-
-    @app.get("/", include_in_schema=False)
-    async def _serve_index():
-        return FileResponse(_index_file)
-
-    _dist_root = os.path.realpath(_frontend_dist)
-
-    @app.get("/{full_path:path}", include_in_schema=False)
-    async def _serve_spa(full_path: str):
-        # Serve real files if present, else SPA fallback to index.html.
-        # Contain the resolved path within the dist root to block traversal
-        # (this handler is reachable over a public tunnel).
-        candidate = os.path.realpath(os.path.join(_frontend_dist, full_path))
-        if (candidate == _dist_root or candidate.startswith(_dist_root + os.sep)) and os.path.isfile(candidate):
-            return FileResponse(candidate)
-        return FileResponse(_index_file)
-
-    logger.info(f"Serving frontend SPA from: {_frontend_dist}")
-else:
-    logger.info("FRONTEND_DIST not set or missing; API-only mode")
-
-
 @app.get("/api/routes/{route_id}/gpx")
 async def download_gpx(route_id: str):
     """Download route as GPX file"""
-    from app.services.gpx_generator import GPXGenerator
     from fastapi.responses import Response
+
+    from app.services.gpx_generator import GPXGenerator
 
     if route_id not in routes_storage:
         raise HTTPException(status_code=404, detail="Route not found")
@@ -426,8 +393,9 @@ async def download_gpx(route_id: str):
 @app.post("/api/routes/export/gpx")
 async def export_route_as_gpx(request: RouteRequest):
     """Export a route directly as GPX without storing it"""
-    from app.services.gpx_generator import GPXGenerator
     from fastapi.responses import Response
+
+    from app.services.gpx_generator import GPXGenerator
 
     # Get configurations based on user profile and custom options
     profile = request.options.userProfile if request.options else "default"
@@ -961,6 +929,44 @@ async def calculate_debug_route(request: RouteRequest):
     except Exception as e:
         logger.error(f"Error calculating debug route: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Processing error: {str(e)}")
+
+
+# --- Static frontend (single-origin serving) ------------------------------
+# If FRONTEND_DIST points at a built Vite `dist/` directory, serve the SPA
+# from the same origin as the API so one host/tunnel can serve both. Declared
+# at the END of the module ON PURPOSE: the catch-all GET "/{full_path}" would
+# otherwise shadow any /api GET route registered after it. Only enabled when
+# BOTH index.html and assets/ exist, so a mis-pointed FRONTEND_DIST degrades to
+# API-only instead of raising at import (StaticFiles) or 500ing per request.
+_frontend_dist = os.environ.get("FRONTEND_DIST")
+_frontend_index = os.path.join(_frontend_dist, "index.html") if _frontend_dist else None
+_frontend_assets = os.path.join(_frontend_dist, "assets") if _frontend_dist else None
+if _frontend_dist and os.path.isfile(_frontend_index or "") and os.path.isdir(_frontend_assets or ""):
+    from fastapi.responses import FileResponse
+    from fastapi.staticfiles import StaticFiles
+
+    app.mount("/assets", StaticFiles(directory=_frontend_assets), name="assets")
+    _dist_root = os.path.realpath(_frontend_dist)
+
+    @app.get("/", include_in_schema=False)
+    async def _serve_index():
+        return FileResponse(_frontend_index)
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def _serve_spa(full_path: str):
+        # Serve a real file if present, else SPA-fallback to index.html.
+        # Contain the resolved path within the dist root to block traversal
+        # (this handler is reachable over a public tunnel).
+        candidate = os.path.realpath(os.path.join(_frontend_dist, full_path))
+        if (candidate == _dist_root or candidate.startswith(_dist_root + os.sep)) and os.path.isfile(candidate):
+            return FileResponse(candidate)
+        return FileResponse(_frontend_index)
+
+    logger.info(f"Serving frontend SPA from: {_frontend_dist}")
+elif _frontend_dist:
+    logger.warning("FRONTEND_DIST=%s missing index.html or assets/; API-only mode", _frontend_dist)
+else:
+    logger.info("FRONTEND_DIST not set; API-only mode")
 
 
 if __name__ == "__main__":

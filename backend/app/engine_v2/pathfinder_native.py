@@ -21,8 +21,10 @@ import math
 import os
 import subprocess
 import threading
+import time
 
 import numpy as np
+
 from app.engine_v2.path_layer import get_path_type_name
 
 logger = logging.getLogger(__name__)
@@ -115,8 +117,11 @@ def _cost_array(terrain_costs: dict) -> np.ndarray:
     arr = np.full(_NCOST, np.nan, dtype=np.float64)
     for k, v in terrain_costs.items():
         ik = int(k)
-        if 0 <= ik < _NCOST:
-            arr[ik] = float(v)
+        if not (0 <= ik < _NCOST):
+            # find_path catches this and falls back to pure Python, rather than
+            # the C kernel silently applying 1.0 for a terrain it can't index.
+            raise ValueError(f"terrain cost key {ik} outside native range [0,{_NCOST})")
+        arr[ik] = float(v)
     return arr
 
 
@@ -146,9 +151,7 @@ def find_path_native(pf, start_lat, start_lon, end_lat, end_lon):
     out_path = np.empty(rows * cols, dtype=np.int32)
     nodes_explored = ctypes.c_int(0)
 
-    import time as _time
-
-    t0 = _time.time()
+    t0 = time.time()
     n = lib.astar(
         elevation.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
         terrain.ctypes.data_as(ctypes.POINTER(ctypes.c_int)),
@@ -170,7 +173,7 @@ def find_path_native(pf, start_lat, start_lon, end_lat, end_lon):
         out_path.ctypes.data_as(ctypes.POINTER(ctypes.c_int)),
         ctypes.byref(nodes_explored),
     )
-    elapsed = _time.time() - t0
+    elapsed = time.time() - t0
     if n < 0:
         raise RuntimeError("native astar kernel returned error")
     if n == 0:
@@ -184,7 +187,6 @@ def find_path_native(pf, start_lat, start_lon, end_lat, end_lon):
     path = []
     total_distance = 0.0
     total_elevation_gain = 0.0
-    terrain_counts = {}
     prev_row = prev_col = None
     prev_elev = None
     for cell in cells:
@@ -193,8 +195,6 @@ def find_path_native(pf, start_lat, start_lon, end_lat, end_lon):
         lon, lat = transform * (c, r)
         elev = float(elevation[r, c])
         path.append((lat, lon, elev))
-        t = int(terrain[r, c])
-        terrain_counts[t] = terrain_counts.get(t, 0) + 1
         if prev_row is not None:
             dr = r - prev_row
             dc = c - prev_col
@@ -202,6 +202,14 @@ def find_path_native(pf, start_lat, start_lon, end_lat, end_lon):
             if elev - prev_elev > 0:
                 total_elevation_gain += elev - prev_elev
         prev_row, prev_col, prev_elev = r, c, elev
+
+    # terrain_breakdown: count in end->start order to match reconstruct_path's
+    # dict insertion order (it walks parents from the goal), so the serialized
+    # stats are key-order identical to the pure-Python engine, not just equal.
+    terrain_counts = {}
+    for cell in reversed(cells):
+        t = int(terrain[int(cell) // cols, int(cell) % cols])
+        terrain_counts[t] = terrain_counts.get(t, 0) + 1
 
     total_points = max(sum(terrain_counts.values()), 1)
     stats = {

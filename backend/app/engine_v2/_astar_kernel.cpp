@@ -170,7 +170,9 @@ extern "C" int astar(
         double steep_from = pool[cur].steep;
         double dev_over = g_from / sld - 1.5;
         if (dev_over < 0.0) dev_over = 0.0;
-        double deviation_penalty = 0.1 * (dev_over * dev_over);  // max(0,x)**2
+        // Python uses `max(0,x) ** 2` (== pow(x, 2.0)); use pow (not x*x) so the
+        // result is bit-identical to Python on any libm, not just glibc.
+        double deviation_penalty = 0.1 * pow(dev_over, 2.0);
         bool from_is_trail = (terrain_from == PT_TRAIL);
 
         for (int k = 0; k < no; k++) {
