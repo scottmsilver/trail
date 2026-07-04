@@ -233,7 +233,7 @@ async def process_route(route_id: str, request: RouteRequest):
         # Get configurations based on user profile and custom options
         profile = request.options.userProfile if request.options else "default"
 
-        engine = request.options.engine if request.options else "v1"
+        engine = request.options.engine if request.options else "v2"
 
         if engine == "v2":
             routes_storage[route_id]["progress"] = 30
@@ -326,6 +326,41 @@ async def get_route(route_id: str):
         stats=route.get("stats", {}),
         createdAt=route["created_at"],
     )
+
+
+# --- Static frontend (single-origin demo serving) -------------------------
+# If FRONTEND_DIST points at a built Vite `dist/` directory, serve the SPA
+# from the same origin as the API so a single tunnel can serve both. This is
+# registered LAST so all /api routes take precedence.
+_frontend_dist = os.environ.get("FRONTEND_DIST")
+if _frontend_dist and os.path.isdir(_frontend_dist):
+    from fastapi.responses import FileResponse
+    from fastapi.staticfiles import StaticFiles
+
+    _index_file = os.path.join(_frontend_dist, "index.html")
+
+    # Serve built static assets (JS/CSS/images) under /assets etc.
+    app.mount("/assets", StaticFiles(directory=os.path.join(_frontend_dist, "assets")), name="assets")
+
+    @app.get("/", include_in_schema=False)
+    async def _serve_index():
+        return FileResponse(_index_file)
+
+    _dist_root = os.path.realpath(_frontend_dist)
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def _serve_spa(full_path: str):
+        # Serve real files if present, else SPA fallback to index.html.
+        # Contain the resolved path within the dist root to block traversal
+        # (this handler is reachable over a public tunnel).
+        candidate = os.path.realpath(os.path.join(_frontend_dist, full_path))
+        if (candidate == _dist_root or candidate.startswith(_dist_root + os.sep)) and os.path.isfile(candidate):
+            return FileResponse(candidate)
+        return FileResponse(_index_file)
+
+    logger.info(f"Serving frontend SPA from: {_frontend_dist}")
+else:
+    logger.info("FRONTEND_DIST not set or missing; API-only mode")
 
 
 @app.get("/api/routes/{route_id}/gpx")
@@ -931,7 +966,9 @@ async def calculate_debug_route(request: RouteRequest):
 if __name__ == "__main__":
     import uvicorn
 
-    # Note: This runs on port 8000 by default
-    # To run on port 9001 (expected by frontend), use:
-    # python -m uvicorn app.main:app --reload --port 9001
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    # Host/port configurable via env; default to loopback (safe default — set
+    # HOST=0.0.0.0 to expose on the LAN). Frontend dev historically expects
+    # port 9001: `python -m uvicorn app.main:app --reload --port 9001`.
+    _host = os.environ.get("HOST", "127.0.0.1")
+    _port = int(os.environ.get("PORT", "8000"))
+    uvicorn.run(app, host=_host, port=_port)

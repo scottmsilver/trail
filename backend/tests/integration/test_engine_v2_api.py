@@ -7,16 +7,22 @@
 #
 # GUARDS ARE SAFETY EQUIPMENT - WHEN THEY FIRE, FIX THE PROBLEM THEY FOUND
 # NEVER weaken, disable, or bypass guards - they prevent real harm
-"""Integration tests: engine flag reaches the dispatcher; v1 default unchanged."""
+"""Integration tests: engine flag reaches the dispatcher; v2 is the default."""
 from app.main import app
 from app.models.route import RouteOptions
 from fastapi.testclient import TestClient
 
 
-def test_route_options_engine_defaults_to_v1():
+def test_route_options_engine_defaults_to_v2():
+    # v2 (two-layer DEM + terrain-aware A*, now with a native kernel) is the
+    # default engine. Explicit v1 remains selectable (see below).
     opts = RouteOptions()
-    assert opts.engine == "v1"
+    assert opts.engine == "v2"
     assert opts.heuristicWeight is None
+
+
+def test_route_options_accepts_explicit_v1():
+    assert RouteOptions(engine="v1").engine == "v1"
 
 
 def test_route_options_rejects_unknown_engine():

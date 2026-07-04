@@ -63,7 +63,7 @@ class RouteOptions(BaseModel):
         1.0, ge=0.1, le=5.0, description="Trail preference: 1.0=normal, >1=prefer natural trails, <1=prefer urban paths"
     )
     engine: str = Field(
-        "v1",
+        "v2",
         pattern="^(v1|v2)$",
         description="Routing engine: v1 (legacy DEMTileCache) or v2 (two-layer + terrain A*)",
     )
