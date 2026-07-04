@@ -214,8 +214,7 @@ function App() {
           return
         }
 
-        const response = await api.exportRouteAsGPX(start, end, routeOptions)
-        const blob = await response.blob()
+        const blob = await api.exportRouteAsGPX(start, end, routeOptions)
         const url = window.URL.createObjectURL(blob)
         const a = document.createElement('a')
         a.href = url

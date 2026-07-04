@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { AdjustmentsHorizontalIcon } from '@heroicons/react/24/outline'
-import type { RouteOptions, SlopeConfig, CustomPathCosts } from '../../services/api'
+import type { RouteOptions, CustomPathCosts } from '../../services/api'
 import './CalibrationToolbar.css'
 
 interface CalibrationToolbarProps {
@@ -78,28 +78,28 @@ const CalibrationToolbar: React.FC<CalibrationToolbarProps> = ({ options, onChan
         <AdjustmentsHorizontalIcon className="icon" />
         <span>Route Calibration</span>
       </div>
-      
+
       <div className="toolbar-tabs">
-        <button 
+        <button
           className={`tab ${activeTab === 'preferences' ? 'active' : ''}`}
           onClick={() => setActiveTab(activeTab === 'preferences' ? null : 'preferences')}
         >
           Route Style
         </button>
-        <button 
+        <button
           className={`tab ${activeTab === 'slopes' ? 'active' : ''}`}
           onClick={() => setActiveTab(activeTab === 'slopes' ? null : 'slopes')}
         >
           Slope Tolerance
         </button>
-        <button 
+        <button
           className={`tab ${activeTab === 'paths' ? 'active' : ''}`}
           onClick={() => setActiveTab(activeTab === 'paths' ? null : 'paths')}
         >
           Path Costs
         </button>
         {onPrepopulateClick && (
-          <button 
+          <button
             className="tab prepopulate-btn"
             onClick={onPrepopulateClick}
           >
@@ -121,7 +121,7 @@ const CalibrationToolbar: React.FC<CalibrationToolbarProps> = ({ options, onChan
               Experienced
             </button>
           </div>
-          
+
           <div className="slider-control">
             <label>
               <span>Max Slope: {maxSlope}°</span>
@@ -166,14 +166,14 @@ const CalibrationToolbar: React.FC<CalibrationToolbarProps> = ({ options, onChan
                 <span>Gradual</span>
               </div>
               <div className="preference-hint">
-                {gradientPreference < 1.0 
+                {gradientPreference < 1.0
                   ? 'Accepts steeper routes for shorter distance'
                   : gradientPreference > 1.0
                   ? 'Prefers gentler slopes even if longer'
                   : 'Balanced approach to slopes'}
               </div>
             </div>
-            
+
             <div className="preference-control">
               <label>
                 <span>Trail Preference</span>
@@ -194,7 +194,7 @@ const CalibrationToolbar: React.FC<CalibrationToolbarProps> = ({ options, onChan
                 <span>Natural</span>
               </div>
               <div className="preference-hint">
-                {trailPreference < 1.0 
+                {trailPreference < 1.0
                   ? 'Prefers streets and sidewalks'
                   : trailPreference > 1.0
                   ? 'Prefers natural trails and paths'
@@ -220,7 +220,7 @@ const CalibrationToolbar: React.FC<CalibrationToolbarProps> = ({ options, onChan
               />
               <span className="value">{(pathCosts.trail || 0.2).toFixed(1)}</span>
             </div>
-            
+
             <div className="path-control">
               <label>Sidewalks</label>
               <input
@@ -233,7 +233,7 @@ const CalibrationToolbar: React.FC<CalibrationToolbarProps> = ({ options, onChan
               />
               <span className="value">{(pathCosts.footway || 0.6).toFixed(1)}</span>
             </div>
-            
+
             <div className="path-control">
               <label>Roads</label>
               <input
@@ -246,7 +246,7 @@ const CalibrationToolbar: React.FC<CalibrationToolbarProps> = ({ options, onChan
               />
               <span className="value">{(pathCosts.residential || 0.85).toFixed(1)}</span>
             </div>
-            
+
             <div className="path-control">
               <label>Off Path</label>
               <input
@@ -260,7 +260,7 @@ const CalibrationToolbar: React.FC<CalibrationToolbarProps> = ({ options, onChan
               <span className="value">{(pathCosts.off_path || 0.5).toFixed(1)}</span>
             </div>
           </div>
-          
+
           <div className="path-hint">
             Lower values = more preferred
           </div>

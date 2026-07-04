@@ -18,7 +18,7 @@ export default function SearchBox({ onLocationSelect }: SearchBoxProps) {
   const [results, setResults] = useState<SearchResult[]>([])
   const [showResults, setShowResults] = useState(false)
   const [loading, setLoading] = useState(false)
-  const searchTimeout = useRef<NodeJS.Timeout>()
+  const searchTimeout = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const containerRef = useRef<HTMLDivElement>(null)
 
   // Close results when clicking outside
@@ -116,7 +116,7 @@ export default function SearchBox({ onLocationSelect }: SearchBoxProps) {
           </button>
         )}
       </div>
-      
+
       {showResults && results.length > 0 && (
         <div className="search-results">
           {results.map((result) => (

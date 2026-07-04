@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import Map from './Map'
 
 // Mock Leaflet
@@ -21,9 +21,9 @@ describe('Map Component', () => {
   it('shows start and end markers when coordinates are set', () => {
     const startCoord = { lat: 40.630, lon: -111.580 }
     const endCoord = { lat: 40.650, lon: -111.560 }
-    
+
     render(<Map start={startCoord} end={endCoord} />)
-    
+
     const markers = screen.getAllByTestId('marker')
     expect(markers).toHaveLength(2)
   })
@@ -34,16 +34,16 @@ describe('Map Component', () => {
       { lat: 40.640, lon: -111.570 },
       { lat: 40.650, lon: -111.560 }
     ]
-    
+
     render(<Map path={path} />)
-    
+
     expect(screen.getByTestId('polyline')).toBeInTheDocument()
   })
 
   it('calls onMapClick when map is clicked', () => {
     const handleMapClick = vi.fn()
     render(<Map onMapClick={handleMapClick} />)
-    
+
     // Note: In a real test, we'd simulate a map click event
     // This is simplified for the mock
   })

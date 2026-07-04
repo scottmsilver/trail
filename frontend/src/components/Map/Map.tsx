@@ -1,6 +1,7 @@
-import { MapContainer, TileLayer, Marker, Popup, Polyline, useMapEvents, LayersControl, useMap, LayerGroup } from 'react-leaflet'
-import { useEffect, useState, useRef } from 'react'
-import L, { LatLngExpression } from 'leaflet'
+import { MapContainer, TileLayer, Marker, Popup, useMapEvents, LayersControl, useMap, LayerGroup } from 'react-leaflet'
+import { useEffect, useState } from 'react'
+import L from 'leaflet'
+import type { LatLngExpression } from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import './Map.css'
 import SlopeOverlay from '../SlopeOverlay/SlopeOverlay'
@@ -53,41 +54,41 @@ function MapClickHandler({ onMapClick }: { onMapClick?: (coord: Coordinate) => v
 
 function MapCenterController({ center }: { center?: { lat: number; lon: number } }) {
   const map = useMap()
-  
+
   useEffect(() => {
     if (center) {
       map.setView([center.lat, center.lon], 14)
     }
   }, [center, map])
-  
+
   return null
 }
 
 function TerrainSlopesController({ setShowSlopes }: { setShowSlopes: (show: boolean) => void }) {
   const map = useMap()
-  
+
   useEffect(() => {
     const handleOverlayAdd = (e: any) => {
       if (e.name === 'Terrain Slopes') {
         setShowSlopes(true)
       }
     }
-    
+
     const handleOverlayRemove = (e: any) => {
       if (e.name === 'Terrain Slopes') {
         setShowSlopes(false)
       }
     }
-    
+
     map.on('overlayadd', handleOverlayAdd)
     map.on('overlayremove', handleOverlayRemove)
-    
+
     return () => {
       map.off('overlayadd', handleOverlayAdd)
       map.off('overlayremove', handleOverlayRemove)
     }
   }, [map, setShowSlopes])
-  
+
   return null
 }
 
@@ -95,13 +96,13 @@ function TerrainSlopesController({ setShowSlopes }: { setShowSlopes: (show: bool
 // Component to handle map ready callback
 function MapReadyHandler({ onMapReady }: { onMapReady?: (map: L.Map) => void }) {
   const map = useMap();
-  
+
   useEffect(() => {
     if (onMapReady && map) {
       onMapReady(map);
     }
   }, [map, onMapReady]);
-  
+
   return null;
 }
 
@@ -112,9 +113,9 @@ export default function Map({ start, end, path, pathWithSlopes, center, onMapCli
   const [showSlopes, setShowSlopes] = useState(false)
 
   return (
-    <MapContainer 
-      center={defaultCenter} 
-      zoom={zoom} 
+    <MapContainer
+      center={defaultCenter}
+      zoom={zoom}
       className="map-container">
       <LayersControl position="topright">
         {/* Base Layers */}
@@ -201,7 +202,7 @@ export default function Map({ start, end, path, pathWithSlopes, center, onMapCli
       {!costPointMode && <MapClickHandler onMapClick={onMapClick} />}
       <MapReadyHandler onMapReady={onMapReady} />
       <MapCenterController center={center} />
-      
+
       <CostSurfaceExplorer
         startCoord={start ? [start.lat, start.lon] : null}
         endCoord={end ? [end.lat, end.lon] : null}
@@ -209,7 +210,7 @@ export default function Map({ start, end, path, pathWithSlopes, center, onMapCli
         onClose={onCloseCostSurface || (() => {})}
         bounds={costSurfaceBounds}
       />
-      
+
       <CostPointExplorer enabled={costPointMode || false} />
     </MapContainer>
   )

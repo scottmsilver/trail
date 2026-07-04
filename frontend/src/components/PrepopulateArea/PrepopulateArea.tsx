@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import L from 'leaflet';
 import './PrepopulateArea.css';
 
@@ -69,7 +69,7 @@ const PrepopulateArea: React.FC<PrepopulateAreaProps> = ({ map, onClose }) => {
       setIsDragging(true);
       setDragStart(e.latlng);
       setCorner1({ lat: e.latlng.lat, lon: e.latlng.lng });
-      
+
       // Clear any existing rectangles
       if (tempRectangle) {
         map.removeLayer(tempRectangle);
@@ -97,7 +97,7 @@ const PrepopulateArea: React.FC<PrepopulateAreaProps> = ({ map, onClose }) => {
         fillOpacity: 0.1,
         dashArray: '5, 5'
       }).addTo(map);
-      
+
       setTempRectangle(rect);
     };
 
@@ -154,7 +154,7 @@ const PrepopulateArea: React.FC<PrepopulateAreaProps> = ({ map, onClose }) => {
       map.removeLayer(tempRectangle);
       setTempRectangle(null);
     }
-    
+
     setCorner1(null);
     setCorner2(null);
     setResult(null);
@@ -221,7 +221,7 @@ const PrepopulateArea: React.FC<PrepopulateAreaProps> = ({ map, onClose }) => {
   if (isMinimized) {
     return (
       <div className="prepopulate-area-minimized">
-        <button 
+        <button
           className="minimize-button"
           onClick={() => setIsMinimized(false)}
           title="Expand prepopulate panel"
@@ -250,8 +250,8 @@ const PrepopulateArea: React.FC<PrepopulateAreaProps> = ({ map, onClose }) => {
           </p>
         </div>
         <div className="header-actions">
-          <button 
-            className="minimize-btn" 
+          <button
+            className="minimize-btn"
             onClick={() => setIsMinimized(true)}
             title="Minimize"
           >
@@ -264,7 +264,7 @@ const PrepopulateArea: React.FC<PrepopulateAreaProps> = ({ map, onClose }) => {
           )}
         </div>
       </div>
-      
+
       <div className="card-content">
         {/* Instructions */}
         {!isSelecting && !corner1 && !result && (
@@ -344,13 +344,13 @@ const PrepopulateArea: React.FC<PrepopulateAreaProps> = ({ map, onClose }) => {
               Select Area
             </button>
           )}
-          
+
           {isSelecting && (
             <button className="btn btn-secondary" onClick={cancelSelection}>
               Cancel
             </button>
           )}
-          
+
           {corner1 && corner2 && !isLoading && !result && (
             <>
               <button className="btn btn-secondary" onClick={startSelection}>
@@ -362,7 +362,7 @@ const PrepopulateArea: React.FC<PrepopulateAreaProps> = ({ map, onClose }) => {
               </button>
             </>
           )}
-          
+
           {result && (
             <button className="btn btn-primary" onClick={startSelection}>
               Select Another Area

@@ -52,6 +52,7 @@ export interface RouteResult {
     estimated_time_min: number
     difficulty: string
     debug_data?: any
+    path_with_slopes?: any[]
   }
   createdAt: string
 }
@@ -66,6 +67,39 @@ export interface DebugRouteResult {
     debug_data: any
   }
   debug_info: string
+}
+
+export interface CostSurfaceResponse {
+  cost_surface: number[][]
+  slope_degrees?: number[][]
+  elevation?: number[][] | null
+  path_raster?: number[][] | null
+  bounds: { north: number; south: number; east: number; west: number }
+  shape: { height: number; width: number }
+  downsampling_factor?: number
+  start?: Coordinate
+  end?: Coordinate
+}
+
+export interface CostPointResponse {
+  lat: number
+  lon: number
+  cost: number
+  slope: number
+  elevation: number | null
+  path_type: string
+  path_id: number
+  raw_osm_data?: Record<string, unknown> | null
+  factors: {
+    base_cost: number
+    slope_cost: number
+    path_multiplier: number
+    is_obstacle: boolean
+  }
+  cost_breakdown?: {
+    formula: string
+    calculation_steps: { step1: string; step2: string; step3: string }
+  }
 }
 
 export class TrailAPI {
@@ -151,6 +185,29 @@ export class TrailAPI {
       options,
     }, {
       responseType: 'blob',
+    })
+    return response.data
+  }
+
+  // Cost surface for a bounding box (used by CostSurfaceExplorer overlay)
+  async getCostSurface(bounds: {
+    north: number
+    south: number
+    east: number
+    west: number
+  }): Promise<CostSurfaceResponse> {
+    const response = await this.client.post<CostSurfaceResponse>('/api/terrain/cost-surface', {
+      bounds,
+    })
+    return response.data
+  }
+
+  // Cost breakdown at a single point (used by CostPointExplorer).
+  // Backend returns 404 when the area has not been precomputed/cached.
+  async getCostAtPoint(lat: number, lon: number): Promise<CostPointResponse> {
+    const response = await this.client.post<CostPointResponse>('/api/terrain/cost-point', {
+      lat,
+      lon,
     })
     return response.data
   }

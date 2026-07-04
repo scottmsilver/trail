@@ -15,7 +15,7 @@ const SlopeOverlay: React.FC<SlopeOverlayProps> = ({ enabled }) => {
   const [legendVisible, setLegendVisible] = useState(true)
   const [mapBounds, setMapBounds] = useState<L.LatLngBounds | null>(null)
   const [pluginLoaded, setPluginLoaded] = useState(false)
-  
+
   // console.log('SlopeOverlay enabled:', enabled, 'plugin loaded:', pluginLoaded)
 
   // Load leaflet.heat plugin dynamically
@@ -45,7 +45,7 @@ const SlopeOverlay: React.FC<SlopeOverlayProps> = ({ enabled }) => {
       }
       return
     }
-    
+
     // Trigger initial load
     if (!mapBounds) {
       setMapBounds(map.getBounds())
@@ -54,7 +54,7 @@ const SlopeOverlay: React.FC<SlopeOverlayProps> = ({ enabled }) => {
     const loadSlopeData = async () => {
       setLoading(true)
       console.log('Loading slope data...')
-      
+
       try {
         const bounds = map.getBounds()
         console.log('Map bounds:', {
@@ -63,7 +63,7 @@ const SlopeOverlay: React.FC<SlopeOverlayProps> = ({ enabled }) => {
           minLon: bounds.getWest(),
           maxLon: bounds.getEast()
         })
-        
+
         const slopeData = await api.getTerrainSlopes({
           minLat: bounds.getSouth(),
           maxLat: bounds.getNorth(),
@@ -84,7 +84,7 @@ const SlopeOverlay: React.FC<SlopeOverlayProps> = ({ enabled }) => {
           // We'll use the actual slope in degrees
           return [lat, slopeData.lons[i], slope] as [number, number, number]
         })
-        
+
         console.log(`Received ${heatData.length} slope data points`)
         const slopeValues = slopeData.slopes
         console.log(`Slope range: ${Math.min(...slopeValues)}° to ${Math.max(...slopeValues)}°`)
@@ -116,13 +116,13 @@ const SlopeOverlay: React.FC<SlopeOverlayProps> = ({ enabled }) => {
           })
 
           heat.addTo(map)
-          
+
           // Ensure the heatmap doesn't block map clicks
           const heatmapPane = map.getPane('overlayPane')
           if (heatmapPane) {
             heatmapPane.style.pointerEvents = 'none'
           }
-          
+
           setHeatmapLayer(heat)
           console.log('Heatmap layer added to map')
         } else {
@@ -164,12 +164,12 @@ const SlopeOverlay: React.FC<SlopeOverlayProps> = ({ enabled }) => {
           Loading terrain data...
         </div>
       )}
-      
+
       {legendVisible && (
         <div className="slope-legend">
           <div className="legend-header">
             <h4>Terrain Slope</h4>
-            <button 
+            <button
               className="legend-close"
               onClick={() => setLegendVisible(false)}
             >
@@ -221,6 +221,7 @@ declare global {
         options: {
           radius?: number
           blur?: number
+          max?: number
           maxZoom?: number
           gradient?: Record<number, string>
           minOpacity?: number
