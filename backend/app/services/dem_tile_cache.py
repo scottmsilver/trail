@@ -18,9 +18,6 @@ from math import atan, degrees, sqrt
 import geopandas as gpd
 import osmnx as ox
 import py3dep
-from pyproj import Transformer
-from shapely.geometry import box
-
 from app.services.compressed_pathfinding import CompressedPathfinder, compress_search_space
 from app.services.compressed_pathfinding_balanced import balanced_compress_search_space
 from app.services.lru import BoundedLRUCache
@@ -28,6 +25,8 @@ from app.services.obstacle_config import ObstacleConfig
 from app.services.path_preferences import PathPreferences
 from app.services.preprocessing import PathfindingPreprocessor
 from app.services.tiled_dem_cache import TiledDEMCache
+from pyproj import Transformer
+from shapely.geometry import box
 
 logger = logging.getLogger(__name__)
 
@@ -72,10 +71,13 @@ class DEMTileCache:
         self.cost_surface_cache = BoundedLRUCache(FALLBACK_CACHE_MAX_ENTRIES)  # computed cost surfaces
 
         # Initialize tiled cache for cost surfaces
-        self.tiled_cache = TiledDEMCache(tile_size_degrees=0.01)  # ~1km tiles
+        self.tiled_cache = TiledDEMCache(
+            tile_size_degrees=0.01,
+            cache_dir=os.environ.get("TRAIL_TILE_CACHE_DIR", "tile_cache"),
+        )  # ~1km tiles
 
         # Get absolute path for DEM data directory
-        self.dem_data_dir = os.path.abspath("dem_data")
+        self.dem_data_dir = os.path.abspath(os.environ.get("TRAIL_DEM_DATA_DIR", "dem_data"))
 
         # Get HTTP cache location (py3dep/HyRiver cache)
         http_cache_path = os.environ.get("HYRIVER_CACHE_NAME", os.path.abspath("cache/aiohttp_cache.sqlite"))
@@ -599,6 +601,9 @@ class DEMTileCache:
 
         # Fetch OSM data for obstacles using config tags
         try:
+            from app.services.osm_settings import apply_osm_settings
+
+            apply_osm_settings(ox)
             ox.settings.log_console = False
             obstacles = ox.features_from_polygon(bbox_polygon, self.obstacle_config.osm_tags)
             return obstacles
