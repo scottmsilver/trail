@@ -1,7 +1,9 @@
 name: CI
-true:
-  push: null
-  pull_request: null
+
+on:
+  push:
+  pull_request:
+
 jobs:
   frontend:
     name: frontend typecheck + build
@@ -10,34 +12,39 @@ jobs:
       run:
         working-directory: frontend
     steps:
-    - uses: actions/checkout@v4
-    - uses: actions/setup-node@v4
-      with:
-        node-version: '22'
-        cache: npm
-        cache-dependency-path: frontend/package-lock.json
-    - run: npm ci
-    - run: npm run build
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      # tsc -b && vite build — fails on missing imports and type errors.
+      - run: npm run build
+
   backend:
     name: backend smoke tests
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
-    - uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
-    - name: Install backend deps
-      run: 'python -m pip install --upgrade pip
-
-        pip install -r backend/requirements.txt
-
-        pip install pytest
-
-        '
-    - name: Run smoke suite
-      working-directory: backend
-      env:
-        PYTHONPATH: .
-      run: "python -m pytest \\\n  tests/unit/test_path_expansion.py \\\n  tests/unit/test_path_connectivity.py \\\n  tests/unit/test_service_v2.py\
-        \ \\\n  tests/unit/test_path_layer.py \\\n  tests/unit/test_pathfinder_v2.py \\\n  tests/unit/test_engine_v2_imports.py\
-        \ \\\n  -q\n"
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install backend deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+          pip install pytest
+      - name: Run smoke suite
+        working-directory: backend
+        env:
+          PYTHONPATH: .
+        run: |
+          python -m pytest \
+            tests/unit/test_path_expansion.py \
+            tests/unit/test_path_connectivity.py \
+            tests/unit/test_service_v2.py \
+            tests/unit/test_path_layer.py \
+            tests/unit/test_pathfinder_v2.py \
+            tests/unit/test_engine_v2_imports.py \
+            -q
