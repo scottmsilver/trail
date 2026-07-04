@@ -1,0 +1,106 @@
+.eval-page {
+  display: flex;
+  width: 100%;
+  height: calc(100vh - 60px);
+  min-height: 400px;
+}
+
+.eval-map-wrapper {
+  flex: 1 1 auto;
+  position: relative;
+}
+
+.eval-map {
+  width: 100%;
+  height: 100%;
+}
+
+.eval-sidebar {
+  flex: 0 0 300px;
+  padding: 16px;
+  border-left: 1px solid #e2e8f0;
+  overflow-y: auto;
+  background: #fff;
+}
+
+.eval-sidebar h2 {
+  margin: 0 0 12px;
+  font-size: 1.1rem;
+}
+
+.eval-readout {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.eval-coord {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.85rem;
+}
+
+.eval-coord-label {
+  font-weight: 600;
+  color: #475569;
+}
+
+.eval-coord-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #0f172a;
+}
+
+.eval-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.eval-btn {
+  padding: 8px 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #f8fafc;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.eval-btn:hover:not(:disabled) {
+  background: #eef2f7;
+}
+
+.eval-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.eval-btn-primary {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: #fff;
+}
+
+.eval-btn-primary:hover:not(:disabled) {
+  background: #1d4ed8;
+}
+
+.eval-btn-active {
+  background: #f97316;
+  border-color: #f97316;
+  color: #fff;
+}
+
+.eval-status {
+  font-size: 0.85rem;
+  color: #475569;
+  min-height: 1.2em;
+  margin-bottom: 16px;
+}
+
+.eval-panels-slot {
+  border-top: 1px dashed #cbd5e1;
+  padding-top: 12px;
+}
