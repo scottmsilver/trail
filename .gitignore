@@ -12,3 +12,6 @@ frontend/node_modules/
 .env
 *.log
 
+
+# Personal preset seed (contains real addresses) — keep out of git
+frontend/src/config/presets.local.json
