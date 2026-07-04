@@ -1,6 +1,7 @@
-from pydantic import BaseModel, Field, validator
-from typing import Optional, List, Dict
 from enum import Enum
+from typing import List, Optional
+
+from pydantic import BaseModel, Field, validator
 
 
 class Coordinate(BaseModel):
@@ -10,64 +11,75 @@ class Coordinate(BaseModel):
 
 class SlopeConfig(BaseModel):
     """Custom slope configuration"""
+
     slope_degrees: float = Field(..., ge=0, le=90, description="Slope in degrees")
     cost_multiplier: float = Field(..., gt=0, description="Cost multiplier for this slope")
-    
+
     class Config:
-        schema_extra = {
-            "example": {
-                "slope_degrees": 15,
-                "cost_multiplier": 2.0
-            }
-        }
+        schema_extra = {"example": {"slope_degrees": 15, "cost_multiplier": 2.0}}
 
 
 class CustomPathCosts(BaseModel):
     """Custom path type costs"""
+
     footway: Optional[float] = Field(None, gt=0, description="Cost multiplier for footways/sidewalks")
     path: Optional[float] = Field(None, gt=0, description="Cost multiplier for paths")
     trail: Optional[float] = Field(None, gt=0, description="Cost multiplier for trails")
     residential: Optional[float] = Field(None, gt=0, description="Cost multiplier for residential streets")
     off_path: Optional[float] = Field(None, gt=0, description="Cost multiplier for off-path terrain")
-    
+
     class Config:
-        schema_extra = {
-            "example": {
-                "trail": 0.3,
-                "residential": 0.7,
-                "off_path": 1.5
-            }
-        }
+        schema_extra = {"example": {"trail": 0.3, "residential": 0.7, "off_path": 1.5}}
 
 
 class RouteOptions(BaseModel):
     avoidSteep: bool = Field(True, description="Avoid steep slopes")
     buffer: float = Field(0.05, gt=0, le=0.5, description="Buffer size in degrees")
     slopeThreshold: float = Field(5.71, gt=0, le=90, description="Slope threshold in degrees")
-    userProfile: str = Field("default", description="User profile: default, easy, experienced, trail_runner, accessibility")
-    
+    userProfile: str = Field(
+        "default", description="User profile: default, easy, experienced, trail_runner, accessibility"
+    )
+
     # Custom configuration options
     customSlopeCosts: Optional[List[SlopeConfig]] = Field(
-        None, 
-        description="Custom slope cost configuration. List must be in ascending order by slope_degrees."
+        None, description="Custom slope cost configuration. List must be in ascending order by slope_degrees."
     )
     customPathCosts: Optional[CustomPathCosts] = Field(
-        None,
-        description="Custom path cost multipliers. Overrides profile defaults."
+        None, description="Custom path cost multipliers. Overrides profile defaults."
     )
     maxSlope: Optional[float] = Field(
         None,
         ge=0,
         le=90,
-        description="Maximum allowed slope in degrees. Routes with steeper slopes will be penalized heavily."
+        description="Maximum allowed slope in degrees. Routes with steeper slopes will be penalized heavily.",
     )
-    
-    @validator('customSlopeCosts')
+    gradientPreference: float = Field(
+        1.0,
+        ge=0.1,
+        le=5.0,
+        description="Gradient preference: 1.0=normal, >1=prefer gradual slopes, <1=accept steep slopes",
+    )
+    trailPreference: float = Field(
+        1.0, ge=0.1, le=5.0, description="Trail preference: 1.0=normal, >1=prefer natural trails, <1=prefer urban paths"
+    )
+    engine: str = Field(
+        "v1",
+        pattern="^(v1|v2)$",
+        description="Routing engine: v1 (legacy DEMTileCache) or v2 (two-layer + terrain A*)",
+    )
+    heuristicWeight: Optional[float] = Field(
+        None,
+        ge=1.0,
+        le=3.0,
+        description="v2 only: A* heuristic weight. 1.0 = optimal, higher = faster/greedier",
+    )
+
+    @validator("customSlopeCosts")
     def validate_slope_order(cls, v):
         if v is not None and len(v) > 1:
             # Check that slopes are in ascending order
             for i in range(1, len(v)):
-                if v[i].slope_degrees <= v[i-1].slope_degrees:
+                if v[i].slope_degrees <= v[i - 1].slope_degrees:
                     raise ValueError("Slope configurations must be in ascending order by slope_degrees")
         return v
 

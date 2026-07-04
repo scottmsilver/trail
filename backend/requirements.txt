@@ -25,3 +25,6 @@ redis==5.0.1
 
 # For WebSockets
 websockets==12.0
+
+# Geodesic distance calculations (used by slope checks and route tests)
+geopy==2.4.1

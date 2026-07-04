@@ -20,6 +20,12 @@
   border-bottom: 1px solid #e5e7eb;
 }
 
+.header-actions {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
 .header-content {
   flex: 1;
 }
@@ -53,6 +59,99 @@
 }
 
 .close-btn:hover {
+  background: #f3f4f6;
+  color: #374151;
+}
+
+.minimize-btn {
+  background: none;
+  border: none;
+  font-size: 20px;
+  color: #6b7280;
+  cursor: pointer;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.2s;
+  font-weight: bold;
+}
+
+.minimize-btn:hover {
+  background: #f3f4f6;
+  color: #374151;
+}
+
+/* Minimized state */
+.prepopulate-area-minimized {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  z-index: 1000;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  display: flex;
+  align-items: center;
+  padding: 4px;
+  gap: 4px;
+}
+
+.minimize-button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: none;
+  border: none;
+  font-size: 14px;
+  font-weight: 500;
+  color: #374151;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.minimize-button:hover {
+  background: #f3f4f6;
+}
+
+.minimize-button .icon {
+  font-size: 16px;
+}
+
+.minimize-button .badge {
+  padding: 2px 6px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  background: #fbbf24;
+  color: #78350f;
+}
+
+.minimize-button .badge.success {
+  background: #34d399;
+  color: #064e3b;
+}
+
+.close-btn-mini {
+  background: none;
+  border: none;
+  font-size: 18px;
+  color: #6b7280;
+  cursor: pointer;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.close-btn-mini:hover {
   background: #f3f4f6;
   color: #374151;
 }

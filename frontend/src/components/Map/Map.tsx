@@ -5,6 +5,8 @@ import 'leaflet/dist/leaflet.css'
 import './Map.css'
 import SlopeOverlay from '../SlopeOverlay/SlopeOverlay'
 import PathWithSlopes from '../PathWithSlopes/PathWithSlopes'
+import CostSurfaceExplorer from '../CostSurfaceExplorer/CostSurfaceExplorer'
+import CostPointExplorer from '../CostPointExplorer/CostPointExplorer'
 
 // Fix for default markers not showing
 import icon from 'leaflet/dist/images/marker-icon.png'
@@ -32,6 +34,10 @@ interface MapProps {
   center?: { lat: number; lon: number }
   onMapClick?: (coord: Coordinate) => void
   onMapReady?: (map: L.Map) => void
+  showCostSurface?: boolean
+  onCloseCostSurface?: () => void
+  costSurfaceBounds?: {north: number, south: number, east: number, west: number}
+  costPointMode?: boolean
 }
 
 function MapClickHandler({ onMapClick }: { onMapClick?: (coord: Coordinate) => void }) {
@@ -99,7 +105,7 @@ function MapReadyHandler({ onMapReady }: { onMapReady?: (map: L.Map) => void }) 
   return null;
 }
 
-export default function Map({ start, end, path, pathWithSlopes, center, onMapClick, onMapReady }: MapProps) {
+export default function Map({ start, end, path, pathWithSlopes, center, onMapClick, onMapReady, showCostSurface, onCloseCostSurface, costSurfaceBounds, costPointMode }: MapProps) {
   // Default center (Utah area)
   const defaultCenter: LatLngExpression = [40.640, -111.570]
   const zoom = 13
@@ -191,9 +197,20 @@ export default function Map({ start, end, path, pathWithSlopes, center, onMapCli
         <PathWithSlopes path={path} pathWithSlopes={pathWithSlopes} />
       )}
 
-      <MapClickHandler onMapClick={onMapClick} />
+      {/* Only enable map click for waypoints when not in cost point mode */}
+      {!costPointMode && <MapClickHandler onMapClick={onMapClick} />}
       <MapReadyHandler onMapReady={onMapReady} />
       <MapCenterController center={center} />
+      
+      <CostSurfaceExplorer
+        startCoord={start ? [start.lat, start.lon] : null}
+        endCoord={end ? [end.lat, end.lon] : null}
+        visible={showCostSurface || false}
+        onClose={onCloseCostSurface || (() => {})}
+        bounds={costSurfaceBounds}
+      />
+      
+      <CostPointExplorer enabled={costPointMode || false} />
     </MapContainer>
   )
 }

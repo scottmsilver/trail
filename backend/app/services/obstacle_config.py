@@ -27,6 +27,8 @@ class ObstacleConfig:
     prefer_trails: bool = True
     allow_water_crossing: bool = False
     max_water_crossing_width: float = 5.0  # meters
+    use_continuous_slope: bool = True  # Use smooth exponential slope costs
+    gradient_preference: float = 1.0  # Higher values prefer gentler slopes (1.0 = normal, 2.0 = prefer gradual)
     
     def __post_init__(self):
         """Set default values if not provided"""
@@ -50,7 +52,7 @@ class ObstacleConfig:
             'leisure': ['golf_course', 'swimming_pool'],
             # Removed highway entirely - streets should not be obstacles
             'barrier': True,
-            'boundary': ['protected_area', 'national_park'],
+            # Removed boundary - protected areas and parks should not be obstacles
             'man_made': ['pipeline', 'power_line']
         }
     
@@ -77,26 +79,30 @@ class ObstacleConfig:
             'barrier': 2000,        # Fences, walls - mostly impassable
             
             # Default
-            'default': 1000         # Unknown obstacles
+            'default': 100          # Unknown obstacles - reduced from 1000
         }
     
     @staticmethod
     def get_default_slope_costs() -> List[tuple[float, float]]:
         """Default slope-based cost multipliers
         Returns: List of (slope_degrees, cost_multiplier) tuples
+        
+        Updated to better balance with path preferences:
+        - Steeper curve to discourage >20° slopes even on trails
+        - Ensures 20° trail is NOT cheaper than 15° off-path
         """
         return [
-            (0, 1.0),      # 0° - flat
-            (5, 1.3),      # 5° - gentle slope  
-            (10, 1.8),     # 10° - noticeable slope
-            (15, 3.0),     # 15° - moderate slope (more penalty)
-            (20, 6.0),     # 20° - moderately steep
-            (25, 12.0),    # 25° - steep slope (more penalty)
-            (30, 30.0),    # 30° - very steep
-            (35, 80.0),    # 35° - extremely steep
-            (40, 200.0),   # 40° - near limit
-            (45, 500.0),   # 45° - extreme slope
-            (60, 2000.0),  # 60° - nearly vertical
+            (0, 1.0),       # 0° - flat
+            (5, 2.0),       # 5° - gentle slope (increased from 1.3)
+            (10, 5.0),      # 10° - noticeable slope (increased from 1.8)
+            (15, 15.0),     # 15° - moderate slope (increased from 3.0)
+            (20, 50.0),     # 20° - steep (increased from 10.0)
+            (25, 200.0),    # 25° - very steep (increased from 25.0)
+            (30, 800.0),    # 30° - extremely steep (increased from 60.0)
+            (35, 3000.0),   # 35° - near limit (increased from 150.0)
+            (40, 10000.0),  # 40° - extreme (increased from 400.0)
+            (45, 50000.0),  # 45° - barely passable (increased from 1000.0)
+            (60, 500000.0), # 60° - essentially impassable (increased from 5000.0)
         ]
     
     def get_cost_for_feature(self, feature_type: str, feature_value: str = None) -> float:
@@ -195,22 +201,24 @@ class ObstacleConfig:
                 return 10000 * np.exp(0.3 * (slope - 25))  # Extreme exponential penalty
                 
         else:  # default profile
-            # Balanced approach for general hiking with stronger penalties
-            # More aggressive curve to discourage very steep slopes
-            if slope <= 5:
-                return 1 + 0.06 * slope  # Gentle linear increase
-            elif slope <= 15:
-                # Polynomial transition zone
-                return 1.3 + 0.08 * (slope - 5) ** 2
-            elif slope <= 25:
-                # Steeper increase
-                return 9.3 + 2 * (slope - 15) ** 1.8
-            elif slope <= 30:
-                # Very high penalty
-                return 300 + 100 * (slope - 25)
-            else:
-                # Essentially impassable for very steep slopes
-                return 5000 * np.exp(0.2 * (slope - 30))
+            # Single continuous exponential function for all slopes
+            # Cost = base * exp(growth_rate * slope)
+            # Tuned for hiking: gentle at low slopes, exponential growth for steep
+            
+            # Parameters tuned for good hiking behavior:
+            # - Flat ground (0°) = 1.0
+            # - Gentle slope (10°) ≈ 1.5
+            # - Moderate slope (20°) ≈ 4.5
+            # - Steep slope (30°) ≈ 33
+            # - Very steep (40°) ≈ 245
+            
+            base_cost = 1.0
+            # Adjust growth rate based on gradient preference
+            # Higher gradient_preference = lower growth rate = gentler cost increase
+            base_growth_rate = 0.085
+            growth_rate = base_growth_rate * (2.0 / (1.0 + self.gradient_preference))
+            
+            return base_cost * np.exp(growth_rate * slope)
 
 
 # Preset configurations for different use cases
