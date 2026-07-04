@@ -27,6 +27,15 @@ typedef struct {
     double steep;  /* consecutive_steep_distance */
 } Node;
 
+/* Euclidean grid distance with deltas widened to double before squaring, so
+ * the intermediate product cannot overflow int (bit-identical to the int form
+ * for the small deltas we actually see). */
+static inline double grid_dist(int r0, int c0, int r1, int c1) {
+    double dr = (double)(r0 - r1);
+    double dc = (double)(c0 - c1);
+    return sqrt(dr * dr + dc * dc);
+}
+
 /* --- CPython heapq port. Heap stores node ids; order key is pool[id].f. --- */
 static inline int heap_lt(const Node *pool, int a, int b) {
     return pool[a].f < pool[b].f;
@@ -81,6 +90,11 @@ int astar(
     const double *terrain_cost, int ncost,  /* cost[t]; NaN => use 1.0 */
     int *out_path, int *out_nodes_explored)
 {
+    /* Guard against index/allocation overflow: bound rows*cols so that both
+     * flat indices and the node-pool counter stay within int (up to ~8 pushes
+     * per cell). Callers should never hit this for real DEM tiles. */
+    if (rows <= 0 || cols <= 0 || (long)rows * cols > (2147483647L / 8)) return -1;
+
     const long ncells = (long)rows * cols;
     const double RAD2DEG = 180.0 / M_PI;
     const int end_row = end_idx / cols;
@@ -89,8 +103,7 @@ int astar(
     /* straight-line distance (grid units), used for the deviation penalty. */
     const int start_row = start_idx / cols;
     const int start_col = start_idx % cols;
-    double straight = resolution * sqrt((double)((start_row - end_row) * (start_row - end_row) +
-                                                 (start_col - end_col) * (start_col - end_col)));
+    double straight = resolution * grid_dist(start_row, start_col, end_row, end_col);
     double sld = straight > 1.0 ? straight : 1.0;
 
     /* 8 neighbor offsets in get_neighbors() order + per-step horiz distance. */
@@ -119,8 +132,7 @@ int astar(
     int heaplen = 0;
 
     /* start node */
-    double sh = heuristic_weight * (resolution * sqrt((double)((start_row - end_row) * (start_row - end_row) +
-                                                               (start_col - end_col) * (start_col - end_col))));
+    double sh = heuristic_weight * (resolution * grid_dist(start_row, start_col, end_row, end_col));
     pool[npool].cell = start_idx;
     pool[npool].parent = -1;
     pool[npool].g = 0.0;
@@ -210,8 +222,7 @@ int astar(
             if (new_g_cost >= best_g[nidx]) continue;  /* INF sentinel => absent */
             best_g[nidx] = new_g_cost;
 
-            double h = heuristic_weight * (resolution * sqrt((double)((next_row - end_row) * (next_row - end_row) +
-                                                                      (next_col - end_col) * (next_col - end_col))));
+            double h = heuristic_weight * (resolution * grid_dist(next_row, next_col, end_row, end_col));
 
             if (npool >= pool_cap) {
                 long new_cap = pool_cap * 2;

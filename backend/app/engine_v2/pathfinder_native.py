@@ -135,6 +135,11 @@ def find_path_native(pf, start_lat, start_lon, end_lat, end_lon):
         return None
     if not (0 <= end_row < rows and 0 <= end_col < cols):
         return None
+    # Keep flat indices + node-pool counter within int range in the C kernel.
+    # Real DEM tiles are far below this; oversized grids raise so find_path
+    # falls back to pure Python rather than risking overflow.
+    if rows * cols > (2**31 - 1) // 8:
+        raise RuntimeError(f"grid too large for native kernel: {rows}x{cols}")
 
     elevation = np.ascontiguousarray(pf.elevation, dtype=np.float64)
     terrain = np.ascontiguousarray(pf.terrain_types, dtype=np.int32)
@@ -167,8 +172,10 @@ def find_path_native(pf, start_lat, start_lon, end_lat, end_lon):
         ctypes.byref(nodes_explored),
     )
     elapsed = _time.time() - t0
-    if n <= 0:
-        return None
+    if n < 0:
+        raise RuntimeError("native astar kernel returned error")
+    if n == 0:
+        return None  # no path found
 
     cells = out_path[:n]
     transform = pf.transform
