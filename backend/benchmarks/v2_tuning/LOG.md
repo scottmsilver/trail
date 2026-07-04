@@ -17,6 +17,9 @@ Overnight optimization loop for `app/engine_v2/pathfinder.py` (terrain-aware A*)
 
 ## Generations
 
+Clean baseline @ repeats=3 median = **78,307 ms** (measured by stashing changes to HEAD).
+
 | Gen | Change | Correct? | Total ms | Speedup vs baseline | Committed |
 |-----|--------|----------|----------|---------------------|-----------|
-| 0 | baseline | — | 79088 | 1.00x | (golden) |
+| 0 | baseline | — | 78307 | 1.00x | (golden) |
+| 1 | `math` module instead of scalar `np.sqrt/arctan2/degrees` in hot path | ✅ exact | 57086 | **1.39x** | yes |

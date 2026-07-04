@@ -178,10 +178,17 @@ def bench(repeats=3, save=True):
     return results
 
 
+def _norm_pts(p):
+    # JSON round-trips tuples to lists; normalize both sides before comparing.
+    return [list(x) for x in (p or [])]
+
+
 def _sigs_equal(a, b):
     """Correctness: identical path + stats (time excluded)."""
-    keys = ("found", "n", "distance_m", "elevation_gain_m", "nodes_explored", "pts")
-    return all(a.get(k) == b.get(k) for k in keys)
+    keys = ("found", "n", "distance_m", "elevation_gain_m", "nodes_explored")
+    if not all(a.get(k) == b.get(k) for k in keys):
+        return False
+    return _norm_pts(a.get("pts")) == _norm_pts(b.get("pts"))
 
 
 def save_golden():

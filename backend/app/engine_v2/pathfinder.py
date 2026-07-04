@@ -15,11 +15,13 @@ weighted A* via heuristic_weight.
 """
 import heapq
 import logging
+import math
 import time
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
+
 from app.engine_v2.path_layer import PathType, get_path_type_name
 
 logger = logging.getLogger(__name__)
@@ -88,7 +90,7 @@ class TerrainAwarePathfinder:
         self.sustained_slope_weight = 0.5
 
     def _euclidean(self, row, col, goal_row, goal_col) -> float:
-        return self.resolution * np.sqrt((row - goal_row) ** 2 + (col - goal_col) ** 2)
+        return self.resolution * math.sqrt((row - goal_row) ** 2 + (col - goal_col) ** 2)
 
     def heuristic(self, row, col, goal_row, goal_col) -> float:
         return self.heuristic_weight * self._euclidean(row, col, goal_row, goal_col)
@@ -150,7 +152,7 @@ class TerrainAwarePathfinder:
         # Calculate physical distance
         row_diff = to_row - from_row
         col_diff = to_col - from_col
-        horiz_distance = self.resolution * np.sqrt(row_diff**2 + col_diff**2)
+        horiz_distance = self.resolution * math.sqrt(row_diff**2 + col_diff**2)
 
         # Base movement cost (distance)
         base_cost = horiz_distance
@@ -164,8 +166,8 @@ class TerrainAwarePathfinder:
 
         # Calculate slope
         elevation_change = abs(elev_to - elev_from)
-        slope_radians = np.arctan2(elevation_change, horiz_distance)
-        slope_degrees = np.degrees(slope_radians)
+        slope_radians = math.atan2(elevation_change, horiz_distance)
+        slope_degrees = math.degrees(slope_radians)
 
         # Check max slope constraint
         if slope_degrees > self.max_slope_degrees:
@@ -328,7 +330,7 @@ class TerrainAwarePathfinder:
             if current.parent:
                 row_diff = current.row - current.parent.row
                 col_diff = current.col - current.parent.col
-                total_distance += self.resolution * np.sqrt(row_diff**2 + col_diff**2)
+                total_distance += self.resolution * math.sqrt(row_diff**2 + col_diff**2)
                 elev_diff = current.elevation - current.parent.elevation
                 if elev_diff > 0:
                     total_elevation_gain += elev_diff
