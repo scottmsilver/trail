@@ -32,6 +32,36 @@ describe('useSavedLocations — seeding', () => {
   })
 })
 
+describe('useSavedLocations — corrupt storage is tolerated', () => {
+  it('drops entries with non-finite coords or wrong shape instead of crashing', () => {
+    localStorage.setItem(
+      'trail.presets',
+      JSON.stringify([
+        null,
+        { name: 'Bad lat', lat: 'nope', lon: 0, kind: 'preset' },
+        { name: 'Good', lat: 40.5, lon: -111.5, kind: 'preset' },
+      ])
+    )
+    const { result } = renderHook(() => useSavedLocations(SEED))
+    expect(result.current.presets.map((p) => p.name)).toEqual(['Good'])
+  })
+
+  it('repairs missing id/name/kind on otherwise-valid entries', () => {
+    localStorage.setItem('trail.presets', JSON.stringify([{ lat: 40.5, lon: -111.5 }]))
+    const { result } = renderHook(() => useSavedLocations(SEED))
+    expect(result.current.presets).toHaveLength(1)
+    expect(result.current.presets[0].id).toBeTruthy()
+    expect(result.current.presets[0].kind).toBe('preset')
+    expect(result.current.presets[0].name).toBe('40.5000, -111.5000')
+  })
+
+  it('returns empty (does not seed) when stored JSON is malformed', () => {
+    localStorage.setItem('trail.presets', '{not json')
+    const { result } = renderHook(() => useSavedLocations(SEED))
+    expect(result.current.presets).toEqual([])
+  })
+})
+
 describe('useSavedLocations — preset CRUD', () => {
   it('addPreset appends and persists', () => {
     const { result } = renderHook(() => useSavedLocations([]))
