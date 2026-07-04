@@ -35,7 +35,18 @@ export default function CasesPanel({ current, onLoad }: CasesPanelProps) {
   }
 
   useEffect(() => {
-    refresh()
+    let alive = true
+    ;(async () => {
+      try {
+        const cs = await listCases()
+        if (alive) setCases(cs)
+      } catch (e) {
+        if (alive) setError('Could not load cases: ' + (e as Error).message)
+      }
+    })()
+    return () => {
+      alive = false
+    }
   }, [])
 
   const canSave = name.trim() !== '' && current.start != null && current.end != null

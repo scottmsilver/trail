@@ -22,6 +22,7 @@ from app.engine_v2.elevation_fd_safe import FDManagedElevationLibrary
 from app.engine_v2.path_layer import PathLayer, PathType
 from app.engine_v2.pathfinder import TerrainAwarePathfinder
 from app.engine_v2.scoring import dominant_factor, rasterize_segment, score_polyline_cells
+from app.engine_v2.snapping import snap_polyline_to_lines
 from app.models.eval import ScoredPath, ScoredSegment
 from app.models.route import Coordinate
 
@@ -218,6 +219,23 @@ class TrailFinderServiceV2:
     async def score_path(self, path: List[Coordinate], options: dict) -> ScoredPath:
         """Score an arbitrary polyline with the engine's cost function (async)."""
         return await asyncio.to_thread(self._score_path_sync, path, options)
+
+    async def snap_to_trails(self, path: List[Coordinate], options: dict, threshold_m: float = 25.0):
+        """Snap a drawn polyline onto nearby OSM trail geometry.
+
+        Returns ``(snapped_path, did_snap)``. On an OSM outage no lines are
+        available and the path is returned unchanged (did_snap=False).
+        """
+        lines = await asyncio.to_thread(self._trail_lines_sync, path, options)
+        return snap_polyline_to_lines(path, lines, threshold_m)
+
+    def _trail_lines_sync(self, path: List[Coordinate], options: dict):
+        options = options or {}
+        sw = Coordinate(lat=min(p.lat for p in path), lon=min(p.lon for p in path))
+        ne = Coordinate(lat=max(p.lat for p in path), lon=max(p.lon for p in path))
+        bounds = self.calculate_bounding_box(sw, ne, options.get("buffer"))
+        with self._data_lock:
+            return self.path_layer.get_trail_lines(bounds)
 
     def _score_path_sync(self, path: List[Coordinate], options: dict) -> ScoredPath:
         options = options or {}

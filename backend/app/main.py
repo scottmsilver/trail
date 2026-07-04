@@ -5,6 +5,9 @@ from datetime import datetime, timezone
 from typing import Dict
 
 import numpy as np
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Response, status
+from fastapi.middleware.cors import CORSMiddleware
+
 from app.engine_v2.service import TrailFinderServiceV2
 from app.models.eval import EvalCase, ScoredPath, ScorePathRequest
 from app.models.route import RouteRequest, RouteResponse, RouteResult, RouteStatus, RouteStatusResponse
@@ -13,8 +16,6 @@ from app.services.eval_store import EvalStore
 from app.services.obstacle_config import ObstaclePresets
 from app.services.path_preferences import PathPreferencePresets, PathPreferences
 from app.services.trail_finder import TrailFinderService
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Response, status
-from fastapi.middleware.cors import CORSMiddleware
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -337,8 +338,9 @@ async def get_route(route_id: str):
 @app.get("/api/routes/{route_id}/gpx")
 async def download_gpx(route_id: str):
     """Download route as GPX file"""
-    from app.services.gpx_generator import GPXGenerator
     from fastapi.responses import Response
+
+    from app.services.gpx_generator import GPXGenerator
 
     if route_id not in routes_storage:
         raise HTTPException(status_code=404, detail="Route not found")
@@ -397,8 +399,9 @@ async def download_gpx(route_id: str):
 @app.post("/api/routes/export/gpx")
 async def export_route_as_gpx(request: RouteRequest):
     """Export a route directly as GPX without storing it"""
-    from app.services.gpx_generator import GPXGenerator
     from fastapi.responses import Response
+
+    from app.services.gpx_generator import GPXGenerator
 
     # Get configurations based on user profile and custom options
     profile = request.options.userProfile if request.options else "default"
@@ -715,8 +718,20 @@ async def score_path_endpoint(request: ScorePathRequest):
     """
     if len(request.path) < 2:
         raise HTTPException(status_code=400, detail="path needs at least two points")
+    options = request.options.model_dump()
+    path = request.path
+    snapped = False
+    if request.snap == "trail":
+        try:
+            path, snapped = await trail_finder_v2.snap_to_trails(path, options)
+        except Exception as e:
+            # Snapping is best-effort; fall back to scoring exactly what was drawn.
+            logger.warning(f"snap-to-trail failed, scoring drawn path: {e}")
     try:
-        return await trail_finder_v2.score_path(request.path, request.options.model_dump())
+        result = await trail_finder_v2.score_path(path, options)
+        if snapped:
+            result.snapped = True
+        return result
     except HTTPException:
         raise
     except Exception as e:

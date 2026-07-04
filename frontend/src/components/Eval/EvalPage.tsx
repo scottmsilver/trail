@@ -57,16 +57,21 @@ export default function EvalPage() {
   const [status, setStatus] = useState('')
   const [running, setRunning] = useState(false)
   const [hoveredSegment, setHoveredSegment] = useState<number | null>(null)
+  // "Go via this trail": snap the drawn candidate onto nearby trails before
+  // scoring. Default on (per design); degrades to exact-drawn where no trail.
+  const [snap, setSnap] = useState<'none' | 'trail'>('trail')
 
   // Latest values for the debounced calibration effect to read without
   // re-triggering itself (it must fire on `options` change only).
   const startRef = useRef(start)
   const endRef = useRef(end)
   const drawnRef = useRef(drawn)
+  const snapRef = useRef(snap)
   const ranOnceRef = useRef(false)
   startRef.current = start
   endRef.current = end
   drawnRef.current = drawn
+  snapRef.current = snap
 
   const defaultCenter: LatLngExpression = [40.64, -111.57]
 
@@ -123,7 +128,7 @@ export default function EvalPage() {
     const d = drawnRef.current
     if (!d || d.path.length < 2) return
     try {
-      setDrawn(await scorePath(d.path, opts))
+      setDrawn(await scorePath(d.path, opts, snapRef.current))
     } catch (err) {
       setStatus('Error scoring drawn path: ' + (err as Error).message)
     }
@@ -137,7 +142,7 @@ export default function EvalPage() {
     }
     setStatus('Scoring drawn path…')
     try {
-      const scored = await scorePath(points, options)
+      const scored = await scorePath(points, options, snapRef.current)
       setDrawn(scored)
       setStatus(`Drawn path scored (cost ${Math.round(scored.totalCost)}).`)
     } catch (err) {
@@ -170,7 +175,7 @@ export default function EvalPage() {
     setStatus(`Loaded "${c.name}".`)
     if (c.referencePath.length >= 2) {
       try {
-        const scored = await scorePath(c.referencePath, c.options)
+        const scored = await scorePath(c.referencePath, c.options, snapRef.current)
         setDrawn(scored)
         drawnRef.current = scored
       } catch (err) {
@@ -303,6 +308,15 @@ export default function EvalPage() {
             Clear
           </button>
         </section>
+
+        <label className="eval-snap-toggle">
+          <input
+            type="checkbox"
+            checked={snap === 'trail'}
+            onChange={(e) => setSnap(e.target.checked ? 'trail' : 'none')}
+          />
+          Snap drawn path to trails
+        </label>
 
         <div className="eval-status">{status || 'Click the map to set start, then end.'}</div>
 
