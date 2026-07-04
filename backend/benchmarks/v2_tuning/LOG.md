@@ -19,6 +19,24 @@ Overnight optimization loop for `app/engine_v2/pathfinder.py` (terrain-aware A*)
 
 Clean baseline @ repeats=3 median = **78,307 ms** (measured by stashing changes to HEAD).
 
+## Result: ~104x faster, byte-identical output
+
+Total v2 pathfinder time over 10 routes × 2 terrain variants: **78.3 s → 0.76 s**.
+The worst single route (`long_ne`, 390k nodes) went **20.0 s → 0.20 s**. Every
+generation produces *byte-identical* paths + stats to the original engine
+(strict oracle), so this is a pure speed win with zero behavior change.
+
+Extra confidence: `verify_opts` ran 84 native-vs-Python comparisons across
+weighted heuristics, max-slope, elevation-weight, steep/fatigue params, and
+`experienced` profile costs on real cached data — all identical.
+
+Why this is the exact-preserving ceiling: the *set* of nodes A* explores is
+fixed by the algorithm, so preserving output means preserving exploration —
+the only lever left is per-node cost, now optimized C++. Going faster would
+require algorithmic changes (weighted/hierarchical A*, corridor precompute)
+that change which path is returned — a product decision, not a free win.
+
+
 | Gen | Change | Correct? | Total ms | Speedup vs baseline | Committed |
 |-----|--------|----------|----------|---------------------|-----------|
 | 0 | baseline | — | 78307 | 1.00x | (golden) |
