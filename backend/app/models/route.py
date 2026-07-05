@@ -1,7 +1,7 @@
 from enum import Enum
 from typing import List, Optional
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, model_validator, validator
 
 
 class Coordinate(BaseModel):
@@ -85,9 +85,28 @@ class RouteOptions(BaseModel):
 
 
 class RouteRequest(BaseModel):
-    start: Coordinate
-    end: Coordinate
+    start: Optional[Coordinate] = None
+    end: Optional[Coordinate] = None
+    points: Optional[List[Coordinate]] = Field(
+        None,
+        description="Ordered waypoints (>=2). Route passes through each in order. Takes precedence over start/end.",
+    )
     options: Optional[RouteOptions] = RouteOptions()
+
+    @model_validator(mode="after")
+    def _require_points_or_endpoints(self):
+        if self.points is not None:
+            if len(self.points) < 2:
+                raise ValueError("points must contain at least 2 coordinates")
+        elif self.start is None or self.end is None:
+            raise ValueError("Provide either 'points' (>=2) or both 'start' and 'end'")
+        return self
+
+    def normalized_points(self) -> List[Coordinate]:
+        """Single ordered points list: `points` if given, else [start, end]."""
+        if self.points is not None:
+            return self.points
+        return [self.start, self.end]
 
 
 class RouteVariantsRequest(RouteRequest):
