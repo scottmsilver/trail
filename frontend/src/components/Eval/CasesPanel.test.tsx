@@ -10,12 +10,23 @@ vi.mock('../../services/evalApi', () => ({
   deleteCase: (id: string) => deleteCase(id),
 }))
 
+const buildGpx = vi.fn()
+const downloadText = vi.fn()
+vi.mock('../../services/gpx', () => ({
+  buildGpx: (...args: unknown[]) => buildGpx(...args),
+}))
+vi.mock('../../services/download', () => ({
+  downloadText: (...args: unknown[]) => downloadText(...args),
+}))
+
 import CasesPanel, { slug } from './CasesPanel'
 
 beforeEach(() => {
   listCases.mockReset().mockResolvedValue([])
   saveCase.mockReset().mockResolvedValue({})
   deleteCase.mockReset().mockResolvedValue(undefined)
+  buildGpx.mockReset().mockReturnValue('<gpx/>')
+  downloadText.mockReset()
 })
 
 test('slug sanitizes names to id-safe form', () => {
@@ -60,6 +71,33 @@ test('flags saved cases that have no reference path', async () => {
   await screen.findByText('HasPath')
   expect(screen.getByText('2 pts')).toBeTruthy()
   expect(screen.getByText('no path')).toBeTruthy()
+})
+
+test('offers an enabled GPX download for a case with a reference path and downloads on click', async () => {
+  listCases.mockResolvedValue([
+    { id: 'p', name: 'HasPath', notes: '', start: current.start, end: current.end, options: current.options, referencePath: [{ lat: 1, lon: 2 }, { lat: 3, lon: 4 }], labels: [] },
+  ])
+  render(<CasesPanel current={current} onLoad={() => {}} />)
+  await screen.findByText('HasPath')
+  const btn = screen.getByRole('button', { name: /gpx/i })
+  expect((btn as HTMLButtonElement).disabled).toBe(false)
+  fireEvent.click(btn)
+  expect(buildGpx).toHaveBeenCalledWith([{ lat: 1, lon: 2 }, { lat: 3, lon: 4 }], 'HasPath')
+  expect(downloadText).toHaveBeenCalledTimes(1)
+  expect(downloadText.mock.calls[0][0]).toBe('HasPath.gpx')
+  expect(downloadText.mock.calls[0][2]).toBe('application/gpx+xml')
+})
+
+test('disables the GPX download for a case with too few reference points', async () => {
+  listCases.mockResolvedValue([
+    { id: 'e', name: 'Empty', notes: '', start: current.start, end: current.end, options: current.options, referencePath: [], labels: [] },
+  ])
+  render(<CasesPanel current={current} onLoad={() => {}} />)
+  await screen.findByText('Empty')
+  const btn = screen.getByRole('button', { name: /gpx/i })
+  expect((btn as HTMLButtonElement).disabled).toBe(true)
+  fireEvent.click(btn)
+  expect(downloadText).not.toHaveBeenCalled()
 })
 
 test('lists cases and appends a label on verdict click', async () => {

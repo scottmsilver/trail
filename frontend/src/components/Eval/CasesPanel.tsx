@@ -3,6 +3,8 @@ import './CasesPanel.css'
 import type { Coordinate, RouteOptions } from '../../services/api'
 import type { EvalCase, EvalLabel } from '../../services/evalApi'
 import { listCases, saveCase, deleteCase } from '../../services/evalApi'
+import { buildGpx } from '../../services/gpx'
+import { downloadText } from '../../services/download'
 
 /** Turn a case name into a filesystem/id-safe slug (mirrors the backend's
  *  sanitization so save→reload round-trips predictably). */
@@ -84,6 +86,17 @@ export default function CasesPanel({ current, onLoad }: CasesPanelProps) {
     }
   }
 
+  /** Download a saved case's drawn reference path as a GPX track file. */
+  const handleDownloadGpx = (c: EvalCase) => {
+    if (c.referencePath.length < 2) return
+    const label = c.name || 'case'
+    try {
+      downloadText(`${label}.gpx`, buildGpx(c.referencePath, label), 'application/gpx+xml')
+    } catch (e) {
+      setError('GPX export failed: ' + (e as Error).message)
+    }
+  }
+
   const handleLabel = async (c: EvalCase, verdict: EvalLabel['verdict']) => {
     const label: EvalLabel = { ts: new Date().toISOString(), verdict }
     try {
@@ -140,6 +153,14 @@ export default function CasesPanel({ current, onLoad }: CasesPanelProps) {
               <div className="cases-item-actions">
                 <button className="cases-btn cases-btn-sm" onClick={() => onLoad(c)}>
                   Load
+                </button>
+                <button
+                  className="cases-btn cases-btn-sm"
+                  onClick={() => handleDownloadGpx(c)}
+                  disabled={c.referencePath.length < 2}
+                  title={c.referencePath.length < 2 ? 'No drawn path to export' : 'Download drawn path as GPX'}
+                >
+                  GPX
                 </button>
                 <button className="cases-btn cases-btn-sm" onClick={() => handleLabel(c, 'pass')} title="Mark good">
                   ✓
