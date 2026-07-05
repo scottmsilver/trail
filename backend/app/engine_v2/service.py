@@ -359,6 +359,25 @@ class TrailFinderServiceV2:
             # Passive overlay: read cached tiles only, never drive an OSM fetch.
             return self.path_layer.get_trail_lines(bounds, cached_only=True)
 
+    async def terrain_features_in_bounds(self, south: float, west: float, north: float, east: float):
+        """Notable terrain polygons (water, glacier, cliffs, scree, ...) within a
+        viewport, for a DISPLAY overlay that MARKS what a route crosses — e.g. a
+        glacier/snowfield that reads like a pond but isn't a routing obstacle.
+        Fetched fresh from OSM (these aren't in the routing tile cache); [] when
+        OSM is disabled/unreachable."""
+        if not all(math.isfinite(v) for v in (south, west, north, east)):
+            raise ValueError("bounds must be finite")
+        if not (-90 <= south < north <= 90 and -180 <= west < east <= 180):
+            raise ValueError("invalid bounds: need -90<=south<north<=90 and -180<=west<east<=180")
+        if (north - south) > MAX_TRAILS_SPAN_DEG or (east - west) > MAX_TRAILS_SPAN_DEG:
+            raise ValueError(f"viewport too large (max {MAX_TRAILS_SPAN_DEG} deg per side)")
+        return await asyncio.to_thread(self._terrain_features_sync, south, west, north, east)
+
+    def _terrain_features_sync(self, south: float, west: float, north: float, east: float):
+        bounds = Bounds(south=south, west=west, north=north, east=east)
+        with self._data_lock:
+            return self.path_layer.get_terrain_polygons(bounds)
+
     def _trail_lines_sync(self, path: List[Coordinate], options: dict):
         options = options or {}
         sw, ne = self._validate_path_extent(path)

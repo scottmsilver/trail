@@ -149,3 +149,23 @@
   border-radius: 6px;
   resize: vertical;
 }
+
+.eval-terrain-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.25rem 0 0.5rem 1.5rem;
+  font-size: 0.78rem;
+  color: #475569;
+}
+.eval-terrain-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+.eval-terrain-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  border: 1px solid rgba(0, 0, 0, 0.2);
+}

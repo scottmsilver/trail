@@ -98,6 +98,27 @@ _WATERWAY_BUFFER_DEG = 0.00008  # ~9 m at these latitudes
 _BUFFERED_WATERWAYS = {"river", "canal", "riverbank"}
 _MAX_WATERWAY_COORDS = 10000  # skip buffering absurdly complex lines (cost guard)
 
+# Tags shown by the terrain DISPLAY overlay. A superset of obstacles plus
+# passable-but-notable terrain — chiefly `natural=glacier` (permanent snowfields
+# render pale blue and read as ponds on the map, yet aren't routing obstacles).
+# Display-only: this never affects routing.
+TERRAIN_DISPLAY_TAGS = {
+    "natural": ["water", "glacier", "wetland", "bay", "cliff", "rock", "bare_rock", "scree"],
+    "water": True,
+    "landuse": ["reservoir", "basin"],
+}
+
+
+def terrain_kind(tags: dict) -> str:
+    """A short label for a terrain-display polygon, from its most specific tag."""
+    for key in ("natural", "landuse"):
+        value = _tag(tags, key)
+        if value:
+            return value
+    if _tag(tags, "water"):
+        return "water"
+    return "terrain"
+
 
 class ObstacleDataUnavailableError(ValueError):
     """Raised when obstacle/water data cannot be loaded for part of a route and
@@ -264,8 +285,9 @@ def _default_fetch(bounds, tags):
         raise RuntimeError("OSM disabled via OSM_DISABLE")
 
     import osmnx as ox
-    from app.services.osm_settings import apply_osm_settings, overpass_urls
     from shapely.geometry import box as shapely_box
+
+    from app.services.osm_settings import apply_osm_settings, overpass_urls
 
     apply_osm_settings(ox)
     ox.settings.log_console = False
@@ -376,6 +398,28 @@ class PathLayer:
         except Exception as e:
             logger.warning(f"OSM fetch failed ({e}); continuing without this layer")
             return None
+
+    def get_terrain_polygons(self, bounds) -> List[dict]:
+        """Fetch notable terrain features (water, glacier, cliffs, scree, ...) in
+        ``bounds`` for a DISPLAY overlay: ``[{"kind": str, "polygon": [[lat,lon],
+        ...]}]``. Display-only — fetched fresh (glaciers etc. aren't in the
+        routing tile cache) and never affects routing. Returns [] on OSM failure
+        or when disabled, so the overlay simply shows nothing."""
+        gdf = self._safe_fetch(bounds, TERRAIN_DISPLAY_TAGS)
+        if gdf is None or len(gdf) == 0:
+            return []
+        out: List[dict] = []
+        for _, row in gdf.iterrows():
+            geom = row.get("geometry")
+            if geom is None or geom.is_empty or geom.geom_type not in ("Polygon", "MultiPolygon"):
+                continue
+            kind = terrain_kind(row.to_dict())
+            parts = [geom] if geom.geom_type == "Polygon" else list(geom.geoms)
+            for part in parts:
+                ring = [[lat, lon] for lon, lat in part.exterior.coords]
+                if len(ring) >= 4:
+                    out.append({"kind": kind, "polygon": ring})
+        return out
 
     def _fetch_and_cache_tiles(self, missing):
         """Fetch the bounding box of the missing tiles once, split the features

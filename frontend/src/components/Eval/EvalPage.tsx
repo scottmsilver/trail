@@ -13,6 +13,8 @@ import { encodeReference, decodeReference, referenceToCase } from './routeRefere
 import type { ScoredPath, EvalCase, RouteVariant } from '../../services/evalApi'
 import DrawLayer from './DrawLayer'
 import TrailsLayer from '../TrailsLayer'
+import TerrainLayer from '../TerrainLayer'
+import { kindsInView, kindLabel, kindColor } from '../terrainKinds'
 import CalibrationToolbar from '../CalibrationToolbar/CalibrationToolbar'
 import ComparePanel from './ComparePanel'
 import AttributionPanel from './AttributionPanel'
@@ -69,6 +71,10 @@ export default function EvalPage() {
   // Overlay the engine's trail/path network for the current viewport.
   const [showTrails, setShowTrails] = useState(false)
   const [trailCount, setTrailCount] = useState<number | null>(null)
+  // Mark notable terrain (glaciers, water, cliffs, ...) so it's clear what a
+  // route crosses — e.g. a glacier that reads like a pond on the base map.
+  const [showTerrain, setShowTerrain] = useState(false)
+  const [terrainKinds, setTerrainKinds] = useState<string[]>([])
   // Expertise route family: one line per hiker level (casual…alpinist) for the
   // same start/end, each toggleable on the map.
   const [variants, setVariants] = useState<RouteVariant[] | null>(null)
@@ -360,6 +366,7 @@ export default function EvalPage() {
           />
 
           <TrailsLayer active={showTrails} onCount={setTrailCount} />
+          <TerrainLayer active={showTerrain} onKinds={setTerrainKinds} />
           <EvalClickHandler disabled={drawing} onClick={handleMapClick} />
           <DrawLayer active={drawing} onFinish={handleDrawFinish} />
 
@@ -521,6 +528,28 @@ export default function EvalPage() {
             <span className="eval-trail-count"> ({trailCount} in view)</span>
           )}
         </label>
+
+        <label className="eval-snap-toggle">
+          <input
+            type="checkbox"
+            checked={showTerrain}
+            onChange={(e) => setShowTerrain(e.target.checked)}
+          />
+          Mark terrain (glaciers, water, cliffs…)
+        </label>
+        {showTerrain && kindsInView(terrainKinds).length > 0 && (
+          <div className="eval-terrain-legend">
+            {kindsInView(terrainKinds).map((k) => (
+              <span key={k} className="eval-terrain-legend-item">
+                <span
+                  className="eval-terrain-swatch"
+                  style={{ background: kindColor(k) }}
+                />
+                {kindLabel(k)}
+              </span>
+            ))}
+          </div>
+        )}
 
         <ExpertisePanel
           variants={variants}

@@ -120,6 +120,32 @@ export async function getTrails(b: {
   return r.json()
 }
 
+/** A notable terrain polygon for the display overlay (water/glacier/cliff/...).
+ *  `polygon` is a ring of [lat, lon] points. */
+export interface TerrainFeature {
+  kind: string
+  polygon: [number, number][]
+}
+
+/** Fetch notable terrain features (water, glacier, cliffs, scree, ...) within a
+ *  viewport, so the map can mark what a route crosses. */
+export async function getTerrain(b: {
+  south: number
+  west: number
+  north: number
+  east: number
+}): Promise<{ features: TerrainFeature[]; count: number }> {
+  const q = new URLSearchParams({
+    south: String(b.south),
+    west: String(b.west),
+    north: String(b.north),
+    east: String(b.east),
+  })
+  const r = await fetch(`${API_BASE}/api/eval/terrain?${q}`)
+  if (!r.ok) throw new Error(`terrain ${r.status}`)
+  return r.json()
+}
+
 export async function listCases(): Promise<EvalCase[]> {
   const r = await fetch(`${API_BASE}/api/eval/cases`)
   if (!r.ok) throw new Error(`list cases ${r.status}`)
