@@ -15,8 +15,6 @@ import os
 import threading
 from typing import List, Optional, Tuple
 
-from rasterio.transform import Affine, from_bounds
-
 from app.engine_v2.elevation import Bounds, TwoLayerElevationLibrary
 from app.engine_v2.elevation_fd_safe import FDManagedElevationLibrary
 from app.engine_v2.path_layer import PathLayer, PathType
@@ -25,6 +23,7 @@ from app.engine_v2.scoring import dominant_factor, rasterize_segment, score_poly
 from app.engine_v2.snapping import densify_polyline, snap_polyline_to_lines
 from app.models.eval import ScoredPath, ScoredSegment
 from app.models.route import Coordinate
+from rasterio.transform import Affine, from_bounds
 
 logger = logging.getLogger(__name__)
 
@@ -262,6 +261,75 @@ class TrailFinderServiceV2:
         except Exception as e:
             logger.exception("v2 route failed")
             return [], {"error": f"v2 engine error: {e}"}
+
+    async def find_multi_route(self, points, options: dict):
+        """Route through `points` in order by stitching N-1 single-pair legs.
+
+        Point 0 is the start, point N-1 the end. Consecutive identical points are
+        collapsed. Any failing leg fails the whole route with a message naming the
+        leg. Returns (concatenated_path, aggregated_stats) with the same client
+        stat keys find_route produces, plus a per-leg `legs` breakdown.
+        """
+        options = options or {}
+
+        # Collapse consecutive identical points (no zero-length legs).
+        pts = [points[0]]
+        for p in points[1:]:
+            if (p.lat, p.lon) != (pts[-1].lat, pts[-1].lon):
+                pts.append(p)
+        if len(pts) < 2:
+            return [], {"error": "Multi-point route needs at least 2 distinct points", "engine": "v2"}
+
+        combined_path = []
+        combined_slopes = []
+        total_distance_m = 0.0
+        total_gain_m = 0.0
+        max_slope = 0.0
+        legs = []
+
+        for i in range(len(pts) - 1):
+            a, b = pts[i], pts[i + 1]
+            leg_path, leg_stats = await self.find_route(a, b, options)
+            if not leg_path:
+                err = leg_stats.get("error", "No route found")
+                return [], {
+                    "error": f"{err} for leg {i + 1} (point {i + 1} -> point {i + 2})",
+                    "engine": "v2",
+                }
+            leg_slopes = leg_stats.get("path_with_slopes", [])
+            if i == 0:
+                combined_path.extend(leg_path)
+                combined_slopes.extend(leg_slopes)
+            else:
+                # Drop the duplicated junction vertex (leg start == previous leg end).
+                combined_path.extend(leg_path[1:])
+                combined_slopes.extend(leg_slopes[1:])
+            total_distance_m += leg_stats.get("distance_m", 0.0)
+            total_gain_m += leg_stats.get("elevation_gain_m", 0.0)
+            max_slope = max(max_slope, leg_stats.get("max_slope", 0.0))
+            legs.append(
+                {
+                    "from": i,
+                    "to": i + 1,
+                    "distance_m": leg_stats.get("distance_m", 0.0),
+                    "elevation_gain_m": leg_stats.get("elevation_gain_m", 0.0),
+                }
+            )
+
+        distance_km = round(total_distance_m / 1000.0, 2)
+        stats = {
+            "engine": "v2",
+            "distance_m": round(total_distance_m, 2),
+            "distance_km": distance_km,
+            "elevation_gain_m": round(total_gain_m, 2),
+            "estimated_time_min": int(distance_km * 15),
+            "max_slope": round(max_slope, 1),
+            "difficulty": self._difficulty(distance_km, max_slope),
+            "waypoints": len(combined_path),
+            "path_with_slopes": combined_slopes,
+            "legs": legs,
+        }
+        return combined_path, stats
 
     def _load_pathfinder(self, bounds, options):
         """Load elevation + terrain for ``bounds`` and build a configured
