@@ -57,6 +57,7 @@ class TerrainNode:
         "elevation",
         "terrain_type",
         "consecutive_steep_distance",
+        "consecutive_steep_climb",
     )
 
     def __init__(
@@ -69,6 +70,7 @@ class TerrainNode:
         elevation=0,
         terrain_type=PathType.UNKNOWN,
         consecutive_steep_distance=0,
+        consecutive_steep_climb=0.0,
     ):
         self.row = row
         self.col = col
@@ -79,6 +81,10 @@ class TerrainNode:
         self.elevation = elevation
         self.terrain_type = terrain_type
         self.consecutive_steep_distance = consecutive_steep_distance
+        # Vertical meters climbed on the current unbroken steep run (resets at a
+        # bench). The extent-aware passability gate blocks when this exceeds the
+        # expertise-level scramble budget. Unused when scramble_budget_m is None.
+        self.consecutive_steep_climb = consecutive_steep_climb
 
     def __lt__(self, other):
         return self.f_cost < other.f_cost
@@ -109,6 +115,20 @@ class TerrainAwarePathfinder:
         self.elevation_exponent = 2.0
         self.obstacle_cost = 10000.0
         self.max_slope_degrees = 45.0
+        # Extent-aware passability (opt-in). When scramble_budget_m is set, the
+        # memoryless slope>max_slope gate is replaced by a stateful one: block a
+        # move only when the *continuous* vertical climb on steep ground
+        # (slope > extent_threshold_degrees, reset at any bench) exceeds the
+        # budget. The budget is an expertise level — ~1.5 m casual .. ~15 m
+        # alpinist (see docs/terrain-passability-extent-aware.md). None => the
+        # classic memoryless gate (unchanged golden/native behavior).
+        self.scramble_budget_m = None
+        self.extent_threshold_degrees = 45.0
+        # Optional per-cell cost multiplier grid (same shape as elevation).
+        # Used by the alternative-routes search to tax a corridor around
+        # already-found routes so the next search prefers a different line.
+        # None => no overlay (unchanged behavior).
+        self.cost_overlay = None
         self.terrain_costs = dict(DEFAULT_TERRAIN_COSTS)
         self.steep_threshold = 15.0
         self.fatigue_distance = 100.0
@@ -195,6 +215,10 @@ class TerrainAwarePathfinder:
         if terrain_from == PathType.TRAIL and terrain_to not in (PathType.TRAIL, PathType.PATH, PathType.NATURAL):
             terrain_multiplier *= 1.5  # Penalty for leaving trails
 
+        # Alternative-routes corridor tax (see find_path hot loop)
+        if self.cost_overlay is not None:
+            terrain_multiplier *= float(self.cost_overlay[to_row, to_col])
+
         # Calculate slope
         elevation_change = abs(elev_to - elev_from)
         slope_radians = math.atan2(elevation_change, horiz_distance)
@@ -268,7 +292,11 @@ class TerrainAwarePathfinder:
         # stats, verified in benchmarks/v2_tuning). Use it when available; fall
         # back to the pure-Python loop below on any failure or when disabled via
         # TRAIL_V2_DISABLE_NATIVE=1.
-        if os.environ.get("TRAIL_V2_DISABLE_NATIVE") not in ("1", "true", "True"):
+        if (
+            self.scramble_budget_m is None
+            and self.cost_overlay is None
+            and os.environ.get("TRAIL_V2_DISABLE_NATIVE") not in ("1", "true", "True")
+        ):
             try:
                 from app.engine_v2 import pathfinder_native
 
@@ -317,6 +345,8 @@ class TerrainAwarePathfinder:
         ew = self.elevation_weight
         eexp = self.elevation_exponent
         max_slope = self.max_slope_degrees
+        budget = self.scramble_budget_m  # None => classic memoryless slope gate
+        ext_thr = self.extent_threshold_degrees
         steep_thr = self.steep_threshold
         fat_dist = self.fatigue_distance
         fat_exp = self.fatigue_exponent
@@ -333,6 +363,7 @@ class TerrainAwarePathfinder:
         # (no np.float64 boxing) and the values are bit-identical to arr[r, c].
         elev = self.elevation.tolist()
         terr = self.terrain_types.tolist()
+        ovl = self.cost_overlay.tolist() if self.cost_overlay is not None else None
 
         OBSTACLE = int(PathType.OBSTACLE)
         TRAIL = int(PathType.TRAIL)
@@ -388,6 +419,7 @@ class TerrainAwarePathfinder:
             terrain_from = terr[cr][cc]
             g_from = current.g_cost
             steep_from = current.consecutive_steep_distance
+            climb_from = current.consecutive_steep_climb
             deviation_ratio = g_from / sld
             deviation_penalty = 0.1 * max(0, deviation_ratio - 1.5) ** 2
             from_is_trail = terrain_from == TRAIL
@@ -407,14 +439,30 @@ class TerrainAwarePathfinder:
                 elev_to = elev[next_row][next_col]
 
                 # slope
-                elevation_change = abs(elev_to - elev_from)
+                rise = elev_to - elev_from
+                elevation_change = rise if rise >= 0 else -rise
                 slope_degrees = degrees(atan2(elevation_change, horiz_distance))
-                if slope_degrees > max_slope:
-                    continue  # impassable
+                if budget is None:
+                    if slope_degrees > max_slope:
+                        continue  # impassable (classic memoryless gate)
+                    new_climb = 0.0
+                else:
+                    # Extent-aware gate: accumulate continuous vertical climb on
+                    # steep ground, reset at a bench, block when it exceeds the
+                    # expertise-level scramble budget. A short scramble-able step
+                    # passes; a sustained wall does not.
+                    if slope_degrees > ext_thr:
+                        new_climb = climb_from + (rise if rise > 0 else 0.0)
+                    else:
+                        new_climb = 0.0
+                    if new_climb > budget:
+                        continue  # impassable at this expertise level
 
                 terrain_multiplier = tcost_get(terrain_to, 1.0)
                 if from_is_trail and terrain_to not in good_after_trail:
                     terrain_multiplier *= 1.5
+                if ovl is not None:
+                    terrain_multiplier *= ovl[next_row][next_col]
 
                 elevation_penalty = ew * (slope_degrees / 10.0) ** eexp
                 if elev_to > elev_from:
@@ -453,6 +501,7 @@ class TerrainAwarePathfinder:
                         elevation=elev_to,
                         terrain_type=terrain_to,
                         consecutive_steep_distance=new_steep_distance,
+                        consecutive_steep_climb=new_climb,
                     ),
                 )
 

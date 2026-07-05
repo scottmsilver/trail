@@ -10,7 +10,14 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.engine_v2.service import TrailFinderServiceV2
 from app.models.eval import EvalCase, ScoredPath, ScorePathRequest
-from app.models.route import RouteRequest, RouteResponse, RouteResult, RouteStatus, RouteStatusResponse
+from app.models.route import (
+    RouteRequest,
+    RouteResponse,
+    RouteResult,
+    RouteStatus,
+    RouteStatusResponse,
+    RouteVariantsRequest,
+)
 from app.services.dem_tile_cache import DEMTileCache
 from app.services.eval_store import EvalStore
 from app.services.obstacle_config import ObstaclePresets
@@ -303,6 +310,24 @@ async def calculate_route(request: RouteRequest, background_tasks: BackgroundTas
     background_tasks.add_task(process_route, route_id, request)
 
     return RouteResponse(routeId=route_id, status=RouteStatus.PROCESSING)
+
+
+@app.post("/api/routes/variants")
+async def route_variants(request: RouteVariantsRequest):
+    """Route the same start/end at several hiker expertise levels in one call
+    (v2 engine, DEM loaded once). Returns one variant per level — a family of
+    options from gentle/turny to direct/committing — with identical lines
+    marked ``duplicateOf`` so clients draw each distinct route once.
+    """
+    options = request.options.model_dump() if request.options else {}
+    try:
+        variants = await trail_finder_v2.find_route_variants(request.start, request.end, options, request.levels)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error computing route variants: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="internal error computing route variants")
+    return {"variants": variants, "count": len(variants)}
 
 
 @app.get("/api/routes/{route_id}/status", response_model=RouteStatusResponse)

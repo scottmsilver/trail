@@ -1,6 +1,8 @@
 # Terrain Passability: Extent-Aware Slope Gating & Expertise Levels
 
-**Status:** findings + design proposal (corpus-validated; not yet implemented)
+**Status:** corpus-validated; Phases 1–2 implemented (extent-aware gate, expertise
+levels bundling scramble budget + steep-aversion, `POST /api/routes/variants`
+family API, cost-overlay groundwork for distinct-alternatives)
 **Date:** 2026-07-04
 **Context:** A real walked GPX route (Wasatch Crest via Dream Peak) scored *impassable*
 while the engine's optimal to the same summit scored passable. Investigating that led to
@@ -172,14 +174,24 @@ worst-continuous-climb per route so the budgets stay calibrated against known-go
 - Analysis tooling added to `trail_env`: `laspy[lazrs]`, `matplotlib`, `markdown`, `rasterio`.
 
 ## 10. Implementation plan (TDD)
-1. **Extent-aware metric in the scorer** — worst-continuous-climb per scored line; expose
-   it in the eval API. Re-score the Dream Peak GPX → passable at 4 m; a synthetic cliff
-   still blocks. Tests + security pass.
-2. **Expertise-level budgets** — add `scrambleBudgetM` to the user profiles; the gate reads
-   it. Casual refuses Olympus; alpinist allows it.
-3. **Extent-aware gate in the core pathfinder** (+ native A* kernel), guarding golden/perf.
-4. **Adaptive 1 m refinement** on a coarse steep-flag (respect the data-loading policy).
-5. **Calibration surface** — eval reports worst-continuous-climb vs SAC so budgets stay tuned.
+1. ✅ **Extent-aware gate in the core pathfinder** — stateful `consecutive_steep_climb`
+   accumulator; opt-in via `scramble_budget_m` (None = classic memoryless gate, so
+   golden/native behavior is untouched; native kernel bypassed when active).
+2. ✅ **Expertise levels** — `EXPERTISE_LEVELS` presets (casual/hiker/scrambler/alpinist)
+   bundling the scramble budget **and** steep-aversion (`elevation_weight`), so a level
+   both *permits* and *prefers* the right line. `expertiseLevel` option +
+   `scrambleBudgetM`/`gradientPreference` overrides.
+3. ✅ **Route-family API** — `find_route_variants` / `POST /api/routes/variants`: one call
+   routes all levels (DEM loaded once), duplicates marked. Demonstrated on the Dream Peak
+   headwall: casual 1.70 km @ ≤20° detour → alpinist 0.77 km @ 43° direct.
+4. ✅ (groundwork) **Cost-overlay corridor tax** in the pathfinder — the primitive for
+   *distinct same-difficulty alternatives* (penalty method): tax a corridor around each
+   found route, re-search, keep alternatives that don't overlap. Service/API next.
+5. **Extent-aware metric in the eval scorer** — worst-continuous-climb per scored line.
+6. **Adaptive 1 m refinement** on a coarse steep-flag (respect the data-loading policy).
+7. **Calibration surface** — eval reports worst-continuous-climb vs SAC so budgets stay tuned.
+8. **Native A* kernel port** of the extent gate + overlay (pure-Python fallback carries
+   them today).
 
 ## 11. Open questions
 - Should over-budget terrain be a hard block or a steep **cost penalty** that grows with

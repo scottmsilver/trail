@@ -49,6 +49,30 @@ SCORE_BUFFER_DEG = 0.003
 # DEM/grid/OSM area — a resource-amplification bypass of the extent guard.
 MAX_SCORE_BUFFER_DEG = 0.05
 
+# Named hiker expertise levels. Each bundles two levers so picking a level both
+# *permits* and *prefers* the right route:
+#   scramble_budget_m — extent-aware gate: max continuous vertical climb on steep
+#     ground (metres). Calibrated from the Wasatch corpus + SAC scale
+#     (docs/terrain-passability-extent-aware.md): ordinary trails ~0 m, alpine
+#     scrambles 6-12 m.
+#   elevation_weight — steep aversion in the cost function. Higher => detour
+#     around steepness (gentle, turny); lower => take the direct steep line
+#     (smooth). Expertise raises the budget AND lowers the aversion, so an
+#     expert cuts the smooth scramble a casual would detour around.
+# A request may pass an "expertiseLevel" name, or override either lever directly
+# with "scrambleBudgetM" / "gradientPreference".
+EXPERTISE_LEVELS = {
+    "casual": {"scramble_budget_m": 1.5, "elevation_weight": 3.0},  # ~SAC T1
+    "hiker": {"scramble_budget_m": 4.0, "elevation_weight": 1.0},  # ~T2; corpus default
+    "scrambler": {"scramble_budget_m": 8.0, "elevation_weight": 0.4},  # ~T3-T4
+    "alpinist": {"scramble_budget_m": 15.0, "elevation_weight": 0.15},  # ~T5-T6
+}
+# Back-compat / convenience: level -> budget only.
+EXPERTISE_BUDGETS_M = {k: v["scramble_budget_m"] for k, v in EXPERTISE_LEVELS.items()}
+# Sanity ceiling for an explicit scrambleBudgetM: far above any human scramble
+# (alpinist preset is 15 m) but finite, so NaN/inf can't disable the gate.
+MAX_SCRAMBLE_BUDGET_M = 100.0
+
 # Cap the viewport a trails-overlay request may span, bounding tile-index work.
 MAX_TRAILS_SPAN_DEG = 1.0
 # Hard ceiling on tiles a trails-overlay request may touch, independent of the
@@ -180,6 +204,34 @@ class TrailFinderServiceV2:
         if options.get("gradientPreference") is not None:
             pf.set_parameters(elevation_weight=options["gradientPreference"])
 
+        # Expertise level bundles the gate budget + steep aversion; explicit
+        # scrambleBudgetM / gradientPreference override the corresponding lever.
+        budget = options.get("scrambleBudgetM")
+        level = options.get("expertiseLevel")
+        preset = None
+        if level is not None:
+            preset = EXPERTISE_LEVELS.get(str(level).lower())
+            if preset is None:
+                raise ValueError(f"unknown expertiseLevel {level!r}; expected one of {sorted(EXPERTISE_LEVELS)}")
+        if preset is not None:
+            if options.get("gradientPreference") is None:  # explicit steep-aversion wins
+                pf.set_parameters(elevation_weight=preset["elevation_weight"])
+            if budget is None:
+                budget = preset["scramble_budget_m"]
+        if budget is not None:
+            # NaN/inf would silently disable the gate (NaN/inf comparisons are
+            # always False), turning "expertise" into "everything passable" —
+            # reject instead. 0 is a valid budget (blocks all steep ground).
+            budget = float(budget)
+            if not math.isfinite(budget) or not (0 <= budget <= MAX_SCRAMBLE_BUDGET_M):
+                raise ValueError(f"scrambleBudgetM must be finite and within 0..{MAX_SCRAMBLE_BUDGET_M}")
+            pf.set_parameters(scramble_budget_m=budget)
+            if options.get("extentThresholdDeg") is not None:
+                thr = float(options["extentThresholdDeg"])
+                if not math.isfinite(thr) or not (1 <= thr <= 89):
+                    raise ValueError("extentThresholdDeg must be finite and within 1..89")
+                pf.set_parameters(extent_threshold_degrees=thr)
+
         t = options.get("trailPreference") or 1.0
         if t != 1.0:
             for pt in (PathType.TRAIL, PathType.PATH, PathType.NATURAL, PathType.UNKNOWN):
@@ -215,6 +267,14 @@ class TrailFinderServiceV2:
         """Load elevation + terrain for ``bounds`` and build a configured
         pathfinder. Shared by routing and eval scoring so both observe identical
         cost inputs. Returns ``(pathfinder, warnings)``.
+        """
+        elevation, transform, terrain_grid, warnings = self._load_terrain(bounds)
+        return self._make_pathfinder(elevation, transform, terrain_grid, options), warnings
+
+    def _load_terrain(self, bounds):
+        """Load elevation + terrain grid for ``bounds`` once, so callers that
+        build several pathfinders over the same area (route variants) don't
+        re-download. Returns ``(elevation, transform, terrain_grid, warnings)``.
 
         Shared library + close_all() clears all open datasets, so loading is
         serialized per service instance; the lock also serializes PathLayer's
@@ -249,7 +309,7 @@ class TrailFinderServiceV2:
         if not (terrain_grid != PathType.UNKNOWN).any():
             warnings.append("OSM data unavailable — terrain-only routing")
 
-        return self._make_pathfinder(elevation, transform, terrain_grid, options), warnings
+        return elevation, transform, terrain_grid, warnings
 
     async def score_path(self, path: List[Coordinate], options: dict) -> ScoredPath:
         """Score an arbitrary polyline with the engine's cost function (async)."""
@@ -395,6 +455,62 @@ class TrailFinderServiceV2:
         self._augment_client_stats(raw_path, stats)
         path = [Coordinate(lat=lat, lon=lon) for (lat, lon, _elev) in raw_path]
         return path, stats
+
+    async def find_route_variants(
+        self, start: Coordinate, end: Coordinate, options: dict, levels: Optional[List[str]] = None
+    ) -> List[dict]:
+        """Route the same start->end at several expertise levels in one call.
+
+        Loads the DEM/terrain once, then runs one search per level. Returns one
+        variant dict per level (in the order given): ``{"level", "scrambleBudgetM",
+        "path", "stats"}``; a level whose line is identical to an earlier level's
+        also carries ``"duplicateOf": <that level>`` so clients can skip drawing
+        it. A level with no route has an empty path and ``stats["error"]``.
+        """
+        options = options or {}
+        if not self.validate_route_request(start, end):
+            raise ValueError("Invalid route request: coordinates too far apart or identical")
+        return await asyncio.to_thread(self._find_route_variants_sync, start, end, options, levels)
+
+    def _find_route_variants_sync(self, start, end, options, levels=None):
+        if levels is None:
+            levels = list(EXPERTISE_LEVELS)
+        levels = [str(lv).lower() for lv in levels]
+        unknown = sorted(set(levels) - set(EXPERTISE_LEVELS))
+        if unknown:
+            raise ValueError(f"unknown expertise level(s) {unknown}; expected among {sorted(EXPERTISE_LEVELS)}")
+        # Dedupe (order-preserving): each level runs at most one search, so a
+        # request like ["hiker"] * 10000 cannot amplify into 10000 A* runs.
+        levels = list(dict.fromkeys(levels))
+
+        bounds = self.calculate_bounding_box(start, end, options.get("buffer"))
+        elevation, transform, terrain_grid, warnings = self._load_terrain(bounds)
+
+        variants: List[dict] = []
+        seen: dict = {}  # rounded path key -> first level that produced it
+        for level in levels:
+            pf = self._make_pathfinder(elevation, transform, terrain_grid, {**options, "expertiseLevel": level})
+            result = pf.find_path(start.lat, start.lon, end.lat, end.lon)
+            entry = {"level": level, "scrambleBudgetM": EXPERTISE_LEVELS[level]["scramble_budget_m"]}
+            if result is None:
+                stats = {"error": "No route found", "engine": "v2"}
+                if warnings:
+                    stats["warnings"] = warnings
+                entry.update(path=[], stats=stats)
+            else:
+                raw_path, stats = result
+                stats["engine"] = "v2"
+                if warnings:
+                    stats["warnings"] = warnings
+                self._augment_client_stats(raw_path, stats)
+                key = tuple((round(lat, 6), round(lon, 6)) for (lat, lon, _z) in raw_path)
+                if key in seen:
+                    entry["duplicateOf"] = seen[key]
+                else:
+                    seen[key] = level
+                entry.update(path=[Coordinate(lat=lat, lon=lon) for (lat, lon, _z) in raw_path], stats=stats)
+            variants.append(entry)
+        return variants
 
     def _augment_client_stats(self, raw_path, stats: dict) -> dict:
         """Add v1-compatible stat keys so the frontend and GPX generator — which
