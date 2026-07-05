@@ -44,3 +44,24 @@ def test_missing_everything_is_rejected():
 def test_start_without_end_is_rejected():
     with pytest.raises(ValidationError):
         RouteRequest(start=A)
+
+
+def test_too_many_points_rejected():
+    with pytest.raises(ValidationError):
+        RouteRequest(points=[A] * 26)
+
+
+def test_max_points_allowed():
+    # 25 is the cap and must be accepted.
+    req = RouteRequest(points=[A] * 25)
+    assert len(req.normalized_points()) == 25
+
+
+def test_variants_request_requires_start_end():
+    from app.models.route import RouteVariantsRequest
+
+    with pytest.raises(ValidationError):
+        RouteVariantsRequest(points=[A, B])  # points-only, no start/end
+    # start+end is accepted
+    req = RouteVariantsRequest(start=A, end=B)
+    assert req.start.lat == A["lat"]

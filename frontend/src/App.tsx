@@ -59,7 +59,7 @@ function App() {
 
   const useAsEnd = (loc: SavedLocation) => {
     const coord = { lat: loc.lat, lon: loc.lon }
-    setPoints(prev => (prev.length === 0 ? [coord] : [...prev, coord]))
+    setPoints(prev => (prev.length === 0 ? [coord] : [...prev.slice(0, -1), coord]))
     setMapCenter(coord)
     recordRecent(loc.lat, loc.lon, loc.name)
     setStatus(`End set to "${loc.name}".`)

@@ -89,7 +89,8 @@ class RouteRequest(BaseModel):
     end: Optional[Coordinate] = None
     points: Optional[List[Coordinate]] = Field(
         None,
-        description="Ordered waypoints (>=2). Route passes through each in order. Takes precedence over start/end.",
+        max_length=25,
+        description="Ordered waypoints (2-25). Route passes through each in order. Takes precedence over start/end.",
     )
     options: Optional[RouteOptions] = RouteOptions()
 
@@ -116,6 +117,8 @@ class RouteVariantsRequest(RouteRequest):
     first). See engine_v2.service.EXPERTISE_LEVELS.
     """
 
+    start: Coordinate
+    end: Coordinate
     levels: Optional[List[str]] = None
 
 
