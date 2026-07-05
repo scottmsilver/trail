@@ -1,0 +1,28 @@
+{
+  "id": "regular-1",
+  "name": "regular 1",
+  "notes": "",
+  "start": {
+    "lat": 40.657245149659104,
+    "lon": -111.57015144165352
+  },
+  "end": {
+    "lat": 40.63326566825841,
+    "lon": -111.58027582553858
+  },
+  "options": {
+    "avoidSteep": true,
+    "buffer": 0.05,
+    "slopeThreshold": 5.71,
+    "userProfile": "default",
+    "customSlopeCosts": null,
+    "customPathCosts": null,
+    "maxSlope": null,
+    "gradientPreference": 1.0,
+    "trailPreference": 1.0,
+    "engine": "v2",
+    "heuristicWeight": null
+  },
+  "referencePath": [],
+  "labels": []
+}

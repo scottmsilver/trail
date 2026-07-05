@@ -21,7 +21,7 @@ import os
 import pickle
 from collections import namedtuple
 from enum import IntEnum
-from typing import Callable, Optional
+from typing import Callable, List, Optional, Tuple
 
 import numpy as np
 from rasterio.features import rasterize as _rio_rasterize
@@ -238,6 +238,24 @@ _DEFAULT_TILE_DEG = 0.02
 _BBox = namedtuple("_BBox", ["south", "west", "north", "east"])
 
 
+def _geom_to_latlon_lines(geom) -> List[List[Tuple[float, float]]]:
+    """Convert a shapely LineString/MultiLineString to lists of (lat, lon).
+
+    Shapely stores coordinates as (x=lon, y=lat); we emit (lat, lon). Non-line
+    geometries (points, polygons) are skipped — snapping only makes sense to
+    linear trail features.
+    """
+    gtype = getattr(geom, "geom_type", None)
+    if gtype == "LineString":
+        return [[(y, x) for x, y in geom.coords]]
+    if gtype in ("MultiLineString", "GeometryCollection"):
+        out: List[List[Tuple[float, float]]] = []
+        for part in geom.geoms:
+            out.extend(_geom_to_latlon_lines(part))
+        return out
+    return []
+
+
 def _concat_features(gdfs):
     """Concatenate non-empty GeoDataFrames, or return None if there are none."""
     gdfs = [g for g in gdfs if g is not None and len(g) > 0]
@@ -334,3 +352,30 @@ class PathLayer:
                 obstacles.append(data["obstacles"])
 
         return rasterize_features(_concat_features(paths), _concat_features(obstacles), shape, transform)
+
+    def get_trail_lines(self, bounds, cached_only: bool = False) -> List[List[Tuple[float, float]]]:
+        """Return path/trail geometries in ``bounds`` as lists of (lat, lon)
+        points, for snapping a drawn polyline. Reuses the same fixed-tile cache
+        as get_grid; degrades to [] on an OSM outage (no snapping, not a crash).
+
+        With ``cached_only=True`` (a passive display overlay), never fetch on a
+        cache miss -- just return whatever tiles are already cached. This keeps
+        an untrusted, high-frequency endpoint from driving Overpass load."""
+        tiles = self._tile_indices(bounds)
+        missing = [(ti, tj) for ti, tj in tiles if not os.path.exists(self._tile_cache(ti, tj))]
+        if missing and not cached_only:
+            self._fetch_and_cache_tiles(missing)
+
+        lines: List[List[Tuple[float, float]]] = []
+        for ti, tj in tiles:
+            cache_file = self._tile_cache(ti, tj)
+            if not os.path.exists(cache_file):
+                continue
+            with open(cache_file, "rb") as fh:
+                data = pickle.load(fh)
+            gdf = data.get("paths")
+            if gdf is None or len(gdf) == 0:
+                continue
+            for geom in gdf.geometry:
+                lines.extend(_geom_to_latlon_lines(geom))
+        return lines

@@ -21,9 +21,71 @@ from app.engine_v2.elevation import Bounds, TwoLayerElevationLibrary
 from app.engine_v2.elevation_fd_safe import FDManagedElevationLibrary
 from app.engine_v2.path_layer import PathLayer, PathType
 from app.engine_v2.pathfinder import TerrainAwarePathfinder
+from app.engine_v2.scoring import dominant_factor, rasterize_segment, score_polyline_cells
+from app.engine_v2.snapping import densify_polyline, snap_polyline_to_lines
+from app.models.eval import ScoredPath, ScoredSegment
 from app.models.route import Coordinate
 
 logger = logging.getLogger(__name__)
+
+
+# Upper bound on drawn-path vertices, to cap the O(vertices) scoring/snapping
+# work an eval request can trigger.
+MAX_PATH_POINTS = 2000
+
+# Raw per-axis degree span a scored/snapped path may cover. Backstops the
+# haversine extent check, which is fooled by antimeridian-straddling paths
+# (short-way distance is tiny but the raw min/max bbox spans ~360deg). Set
+# comfortably above any legitimate <=50 km path (~0.45deg lat / ~0.6deg lon).
+MAX_SCORE_SPAN_DEG = 1.0
+
+# Scoring/snapping only need DEM+terrain covering the drawn polyline plus a
+# small margin — NOT the routing exploration buffer (~0.02deg), which loads a
+# far larger area (and, on an OSM cache miss, many more Overpass fetches). A
+# tight margin keeps eval interactions fast.
+SCORE_BUFFER_DEG = 0.003
+# A caller-supplied buffer expands the scored bbox AFTER _validate_path_extent(),
+# so cap it: otherwise a small (validated) path with buffer=0.5 loads a far larger
+# DEM/grid/OSM area — a resource-amplification bypass of the extent guard.
+MAX_SCORE_BUFFER_DEG = 0.05
+
+# Named hiker expertise levels. Each bundles two levers so picking a level both
+# *permits* and *prefers* the right route:
+#   scramble_budget_m — extent-aware gate: max continuous vertical climb on steep
+#     ground (metres). Calibrated from the Wasatch corpus + SAC scale
+#     (docs/terrain-passability-extent-aware.md): ordinary trails ~0 m, alpine
+#     scrambles 6-12 m.
+#   elevation_weight — steep aversion in the cost function. Higher => detour
+#     around steepness (gentle, turny); lower => take the direct steep line
+#     (smooth). Expertise raises the budget AND lowers the aversion, so an
+#     expert cuts the smooth scramble a casual would detour around.
+# A request may pass an "expertiseLevel" name, or override either lever directly
+# with "scrambleBudgetM" / "gradientPreference".
+EXPERTISE_LEVELS = {
+    "casual": {"scramble_budget_m": 1.5, "elevation_weight": 3.0},  # ~SAC T1
+    "hiker": {"scramble_budget_m": 4.0, "elevation_weight": 1.0},  # ~T2; corpus default
+    "scrambler": {"scramble_budget_m": 8.0, "elevation_weight": 0.4},  # ~T3-T4
+    "alpinist": {"scramble_budget_m": 15.0, "elevation_weight": 0.15},  # ~T5-T6
+}
+# Back-compat / convenience: level -> budget only.
+EXPERTISE_BUDGETS_M = {k: v["scramble_budget_m"] for k, v in EXPERTISE_LEVELS.items()}
+# Sanity ceiling for an explicit scrambleBudgetM: far above any human scramble
+# (alpinist preset is 15 m) but finite, so NaN/inf can't disable the gate.
+MAX_SCRAMBLE_BUDGET_M = 100.0
+
+# Cap the viewport a trails-overlay request may span, bounding tile-index work.
+MAX_TRAILS_SPAN_DEG = 1.0
+# Hard ceiling on tiles a trails-overlay request may touch, independent of the
+# degree span (guards against a small OSM_TILE_DEG blowing up the tile list).
+MAX_TRAILS_TILES = 4000
+
+# "Snap drawn path to trails" tuning. Hand-drawing on a zoomed map is imprecise,
+# so the catch radius is generous (SNAP_THRESHOLD_M). The drawn line is first
+# densified to ~SNAP_DENSIFY_STEP_M spacing so the WHOLE line snaps onto a trail
+# (not just the clicked vertices), capped at SNAP_MAX_POINTS to bound scoring.
+SNAP_THRESHOLD_M = 60.0
+SNAP_DENSIFY_STEP_M = 15.0
+SNAP_MAX_POINTS = 1500
 
 
 class TrailFinderServiceV2:
@@ -142,6 +204,34 @@ class TrailFinderServiceV2:
         if options.get("gradientPreference") is not None:
             pf.set_parameters(elevation_weight=options["gradientPreference"])
 
+        # Expertise level bundles the gate budget + steep aversion; explicit
+        # scrambleBudgetM / gradientPreference override the corresponding lever.
+        budget = options.get("scrambleBudgetM")
+        level = options.get("expertiseLevel")
+        preset = None
+        if level is not None:
+            preset = EXPERTISE_LEVELS.get(str(level).lower())
+            if preset is None:
+                raise ValueError(f"unknown expertiseLevel {level!r}; expected one of {sorted(EXPERTISE_LEVELS)}")
+        if preset is not None:
+            if options.get("gradientPreference") is None:  # explicit steep-aversion wins
+                pf.set_parameters(elevation_weight=preset["elevation_weight"])
+            if budget is None:
+                budget = preset["scramble_budget_m"]
+        if budget is not None:
+            # NaN/inf would silently disable the gate (NaN/inf comparisons are
+            # always False), turning "expertise" into "everything passable" —
+            # reject instead. 0 is a valid budget (blocks all steep ground).
+            budget = float(budget)
+            if not math.isfinite(budget) or not (0 <= budget <= MAX_SCRAMBLE_BUDGET_M):
+                raise ValueError(f"scrambleBudgetM must be finite and within 0..{MAX_SCRAMBLE_BUDGET_M}")
+            pf.set_parameters(scramble_budget_m=budget)
+            if options.get("extentThresholdDeg") is not None:
+                thr = float(options["extentThresholdDeg"])
+                if not math.isfinite(thr) or not (1 <= thr <= 89):
+                    raise ValueError("extentThresholdDeg must be finite and within 1..89")
+                pf.set_parameters(extent_threshold_degrees=thr)
+
         t = options.get("trailPreference") or 1.0
         if t != 1.0:
             for pt in (PathType.TRAIL, PathType.PATH, PathType.NATURAL, PathType.UNKNOWN):
@@ -173,19 +263,29 @@ class TrailFinderServiceV2:
             logger.exception("v2 route failed")
             return [], {"error": f"v2 engine error: {e}"}
 
-    def _find_route_sync(self, start, end, options):
-        warnings: List[str] = []
-        bounds = self.calculate_bounding_box(start, end, options.get("buffer"))
+    def _load_pathfinder(self, bounds, options):
+        """Load elevation + terrain for ``bounds`` and build a configured
+        pathfinder. Shared by routing and eval scoring so both observe identical
+        cost inputs. Returns ``(pathfinder, warnings)``.
+        """
+        elevation, transform, terrain_grid, warnings = self._load_terrain(bounds)
+        return self._make_pathfinder(elevation, transform, terrain_grid, options), warnings
 
-        # Shared library + close_all() clears all open datasets, so data
-        # loading must be serialized per service instance. The lock also
-        # serializes PathLayer's non-atomic npy cache write.
+    def _load_terrain(self, bounds):
+        """Load elevation + terrain grid for ``bounds`` once, so callers that
+        build several pathfinders over the same area (route variants) don't
+        re-download. Returns ``(elevation, transform, terrain_grid, warnings)``.
+
+        Shared library + close_all() clears all open datasets, so loading is
+        serialized per service instance; the lock also serializes PathLayer's
+        non-atomic npy cache write.
+        """
+        warnings: List[str] = []
         with self._data_lock:
             self.elevation_lib.load_area(bounds)
             elevation, meta = self.elevation_lib.get_elevation_array(bounds)
-            # TwoLayerElevationLibrary's metadata carries the transform as a
-            # coefficient dict {a,b,c,d,e,f}; injected fakes may pass a real
-            # Affine. The pathfinder needs a rasterio Affine.
+            # Metadata carries the transform as a coefficient dict {a..f};
+            # injected fakes may pass a real Affine. Pathfinder needs an Affine.
             raw_transform = meta.get("transform") if isinstance(meta, dict) else None
             if isinstance(raw_transform, Affine):
                 transform = raw_transform
@@ -209,7 +309,138 @@ class TrailFinderServiceV2:
         if not (terrain_grid != PathType.UNKNOWN).any():
             warnings.append("OSM data unavailable — terrain-only routing")
 
-        pf = self._make_pathfinder(elevation, transform, terrain_grid, options)
+        return elevation, transform, terrain_grid, warnings
+
+    async def score_path(self, path: List[Coordinate], options: dict) -> ScoredPath:
+        """Score an arbitrary polyline with the engine's cost function (async)."""
+        return await asyncio.to_thread(self._score_path_sync, path, options)
+
+    async def snap_to_trails(self, path: List[Coordinate], options: dict, threshold_m: float = SNAP_THRESHOLD_M):
+        """Snap a drawn polyline onto nearby OSM trail geometry.
+
+        The drawn line is densified first so the WHOLE line snaps onto a trail,
+        not just the vertices the user clicked (see densify_polyline). Returns
+        ``(snapped_path, did_snap)``. On an OSM outage no lines are available and
+        the (still densified) path is returned unchanged (did_snap=False).
+        """
+        lines = await asyncio.to_thread(self._trail_lines_sync, path, options)
+        dense = densify_polyline(path, SNAP_DENSIFY_STEP_M, SNAP_MAX_POINTS)
+        return snap_polyline_to_lines(dense, lines, threshold_m)
+
+    async def trail_lines_in_bounds(self, south: float, west: float, north: float, east: float):
+        """Trail/path geometry (the OSM highway=* ways the engine routes on)
+        within a viewport, as lists of (lat, lon) points — for a display
+        overlay. Reads the fixed-tile OSM cache and returns [] for areas with no
+        cached tiles; under OSM_DISABLE it does not fetch, so it never stalls."""
+        if not all(math.isfinite(v) for v in (south, west, north, east)):
+            raise ValueError("bounds must be finite")
+        if not (-90 <= south < north <= 90 and -180 <= west < east <= 180):
+            raise ValueError("invalid bounds: need -90<=south<north<=90 and -180<=west<east<=180")
+        if (north - south) > MAX_TRAILS_SPAN_DEG or (east - west) > MAX_TRAILS_SPAN_DEG:
+            raise ValueError(f"viewport too large (max {MAX_TRAILS_SPAN_DEG} deg per side)")
+        # Belt-and-suspenders vs. a small OSM_TILE_DEG: bound the tile count too.
+        deg = getattr(self.path_layer, "tile_deg", 0.02)
+        approx_tiles = ((north - south) / deg + 1) * ((east - west) / deg + 1)
+        if approx_tiles > MAX_TRAILS_TILES:
+            raise ValueError("viewport spans too many tiles")
+        return await asyncio.to_thread(self._trail_lines_bounds_sync, south, west, north, east)
+
+    def _trail_lines_bounds_sync(self, south: float, west: float, north: float, east: float):
+        bounds = Bounds(south=south, west=west, north=north, east=east)
+        with self._data_lock:
+            # Passive overlay: read cached tiles only, never drive an OSM fetch.
+            return self.path_layer.get_trail_lines(bounds, cached_only=True)
+
+    def _trail_lines_sync(self, path: List[Coordinate], options: dict):
+        options = options or {}
+        sw, ne = self._validate_path_extent(path)
+        bounds = self.calculate_bounding_box(sw, ne, self._score_buffer(options))
+        with self._data_lock:
+            return self.path_layer.get_trail_lines(bounds)
+
+    @staticmethod
+    def _score_buffer(options: dict) -> float:
+        """Buffer (deg) for scoring/snapping bounds: honor an explicit
+        options['buffer'] if given (tests/advanced callers), else the tight
+        default that keeps eval interactions fast."""
+        b = options.get("buffer")
+        b = SCORE_BUFFER_DEG if b is None else b
+        # Clamp to [0, MAX] so a crafted buffer can't amplify the scored area.
+        return min(max(b, 0.0), MAX_SCORE_BUFFER_DEG)
+
+    def _validate_path_extent(self, path: List[Coordinate]):
+        """Reject degenerate/oversized polylines before we allocate a grid for
+        them (guards against OOM from a huge bounding box or vertex count)."""
+        if len(path) < 2:
+            raise ValueError("path needs at least two points")
+        if len(path) > MAX_PATH_POINTS:
+            raise ValueError(f"path has too many points ({len(path)} > {MAX_PATH_POINTS})")
+        sw = Coordinate(lat=min(p.lat for p in path), lon=min(p.lon for p in path))
+        ne = Coordinate(lat=max(p.lat for p in path), lon=max(p.lon for p in path))
+        # Raw degree-span cap FIRST: the haversine below takes the short way
+        # around the globe, so an antimeridian-straddling pair (e.g. lon -179.9
+        # and 179.9) reads as a few km yet spans ~360deg of raw min/max lon —
+        # which is what actually sizes the grid/tile enumeration. Reject that
+        # before it becomes a giant bounding box.
+        if (ne.lat - sw.lat) > MAX_SCORE_SPAN_DEG or (ne.lon - sw.lon) > MAX_SCORE_SPAN_DEG:
+            raise ValueError(f"path spans too many degrees (max {MAX_SCORE_SPAN_DEG} per axis)")
+        span_km = self._haversine_km(sw, ne)
+        if span_km > self.max_distance_km:
+            raise ValueError(f"path extent {span_km:.1f} km exceeds max {self.max_distance_km} km")
+        return sw, ne
+
+    def _score_path_sync(self, path: List[Coordinate], options: dict) -> ScoredPath:
+        options = options or {}
+        sw, ne = self._validate_path_extent(path)
+        # Bounding box covering the whole polyline plus a small margin.
+        bounds = self.calculate_bounding_box(sw, ne, self._score_buffer(options))
+        pf, _warnings = self._load_pathfinder(bounds, options)
+
+        # Clamp vertices into the grid: a point on the bbox max edge truncates to
+        # index == shape, and numpy would wrap a negative index into a wrong cost.
+        def _clamp(rc):
+            r, c = rc
+            return (min(max(r, 0), pf.rows - 1), min(max(c, 0), pf.cols - 1))
+
+        verts = [_clamp(pf.lat_lon_to_grid(p.lat, p.lon)) for p in path]
+        # Deviation penalty is measured against the whole-path straight line —
+        # the same reference the engine's optimal path is scored against.
+        sld = pf.resolution * math.sqrt((verts[0][0] - verts[-1][0]) ** 2 + (verts[0][1] - verts[-1][1]) ** 2)
+        segments: List[ScoredSegment] = []
+        total = 0.0
+        dist = 0.0
+        egain = 0.0
+        steep = 0.0
+        for (a, b), pa, pb in zip(zip(verts, verts[1:]), path, path[1:]):
+            cells = rasterize_segment(a[0], a[1], b[0], b[1])
+            seg = score_polyline_cells(pf, cells, sld, running_distance=dist, running_steep=steep)
+            segments.append(
+                ScoredSegment(
+                    **{
+                        "from": pa,
+                        "to": pb,
+                        "cost": seg["total"],
+                        "factors": seg["factors"],
+                        "dominantFactor": dominant_factor(seg["factors"]),
+                    }
+                )
+            )
+            total += seg["total"]
+            dist += seg["distance"]
+            egain += seg["egain"]
+            steep = seg["steep"]
+        return ScoredPath(
+            path=path,
+            snapped=False,
+            totalCost=total,
+            distanceM=dist,
+            elevationGainM=egain,
+            segments=segments,
+        )
+
+    def _find_route_sync(self, start, end, options):
+        bounds = self.calculate_bounding_box(start, end, options.get("buffer"))
+        pf, warnings = self._load_pathfinder(bounds, options)
         result = pf.find_path(start.lat, start.lon, end.lat, end.lon)
         if result is None:
             stats = {"error": "No route found", "engine": "v2"}
@@ -224,6 +455,62 @@ class TrailFinderServiceV2:
         self._augment_client_stats(raw_path, stats)
         path = [Coordinate(lat=lat, lon=lon) for (lat, lon, _elev) in raw_path]
         return path, stats
+
+    async def find_route_variants(
+        self, start: Coordinate, end: Coordinate, options: dict, levels: Optional[List[str]] = None
+    ) -> List[dict]:
+        """Route the same start->end at several expertise levels in one call.
+
+        Loads the DEM/terrain once, then runs one search per level. Returns one
+        variant dict per level (in the order given): ``{"level", "scrambleBudgetM",
+        "path", "stats"}``; a level whose line is identical to an earlier level's
+        also carries ``"duplicateOf": <that level>`` so clients can skip drawing
+        it. A level with no route has an empty path and ``stats["error"]``.
+        """
+        options = options or {}
+        if not self.validate_route_request(start, end):
+            raise ValueError("Invalid route request: coordinates too far apart or identical")
+        return await asyncio.to_thread(self._find_route_variants_sync, start, end, options, levels)
+
+    def _find_route_variants_sync(self, start, end, options, levels=None):
+        if levels is None:
+            levels = list(EXPERTISE_LEVELS)
+        levels = [str(lv).lower() for lv in levels]
+        unknown = sorted(set(levels) - set(EXPERTISE_LEVELS))
+        if unknown:
+            raise ValueError(f"unknown expertise level(s) {unknown}; expected among {sorted(EXPERTISE_LEVELS)}")
+        # Dedupe (order-preserving): each level runs at most one search, so a
+        # request like ["hiker"] * 10000 cannot amplify into 10000 A* runs.
+        levels = list(dict.fromkeys(levels))
+
+        bounds = self.calculate_bounding_box(start, end, options.get("buffer"))
+        elevation, transform, terrain_grid, warnings = self._load_terrain(bounds)
+
+        variants: List[dict] = []
+        seen: dict = {}  # rounded path key -> first level that produced it
+        for level in levels:
+            pf = self._make_pathfinder(elevation, transform, terrain_grid, {**options, "expertiseLevel": level})
+            result = pf.find_path(start.lat, start.lon, end.lat, end.lon)
+            entry = {"level": level, "scrambleBudgetM": EXPERTISE_LEVELS[level]["scramble_budget_m"]}
+            if result is None:
+                stats = {"error": "No route found", "engine": "v2"}
+                if warnings:
+                    stats["warnings"] = warnings
+                entry.update(path=[], stats=stats)
+            else:
+                raw_path, stats = result
+                stats["engine"] = "v2"
+                if warnings:
+                    stats["warnings"] = warnings
+                self._augment_client_stats(raw_path, stats)
+                key = tuple((round(lat, 6), round(lon, 6)) for (lat, lon, _z) in raw_path)
+                if key in seen:
+                    entry["duplicateOf"] = seen[key]
+                else:
+                    seen[key] = level
+                entry.update(path=[Coordinate(lat=lat, lon=lon) for (lat, lon, _z) in raw_path], stats=stats)
+            variants.append(entry)
+        return variants
 
     def _augment_client_stats(self, raw_path, stats: dict) -> dict:
         """Add v1-compatible stat keys so the frontend and GPX generator — which

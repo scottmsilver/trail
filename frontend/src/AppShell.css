@@ -1,0 +1,22 @@
+.app-shell-nav {
+  display: flex;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #ddd;
+  background: #fafafa;
+}
+
+.app-shell-nav button {
+  padding: 6px 16px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.app-shell-nav button.active {
+  background: #2563eb;
+  color: #fff;
+  border-color: #2563eb;
+}

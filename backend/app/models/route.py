@@ -90,6 +90,16 @@ class RouteRequest(BaseModel):
     options: Optional[RouteOptions] = RouteOptions()
 
 
+class RouteVariantsRequest(RouteRequest):
+    """Route the same start/end at several expertise levels in one call.
+
+    ``levels`` selects/orders the expertise levels (default: all, easiest
+    first). See engine_v2.service.EXPERTISE_LEVELS.
+    """
+
+    levels: Optional[List[str]] = None
+
+
 class RouteStatus(str, Enum):
     PENDING = "pending"
     PROCESSING = "processing"
