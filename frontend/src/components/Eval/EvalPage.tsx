@@ -7,7 +7,9 @@ import './EvalPage.css'
 import api from '../../services/api'
 import type { Coordinate, RouteOptions } from '../../services/api'
 import { scorePath, formatCost, isImpassable, getRouteVariants } from '../../services/evalApi'
-import { parseGpx, downsamplePath, chooseGpxComparison } from '../../services/gpx'
+import { parseGpx, downsamplePath, chooseGpxComparison, buildGpx } from '../../services/gpx'
+import { downloadText } from '../../services/download'
+import { encodeReference, decodeReference, referenceToCase } from './routeReference'
 import type { ScoredPath, EvalCase, RouteVariant } from '../../services/evalApi'
 import DrawLayer from './DrawLayer'
 import TrailsLayer from '../TrailsLayer'
@@ -72,6 +74,10 @@ export default function EvalPage() {
   const [variants, setVariants] = useState<RouteVariant[] | null>(null)
   const [visibleLevels, setVisibleLevels] = useState<Record<string, boolean>>({})
   const [familyRunning, setFamilyRunning] = useState(false)
+  // Copy/paste route reference: a small textarea (toggled) for pasting a shared
+  // reference JSON and applying it via the existing loadCase restore path.
+  const [pasteOpen, setPasteOpen] = useState(false)
+  const [pasteText, setPasteText] = useState('')
 
   // Latest values for the debounced calibration effect to read without
   // re-triggering itself (it must fire on `options` change only).
@@ -284,6 +290,46 @@ export default function EvalPage() {
     setStatus('')
   }
 
+  const canExport = !!(drawn && drawn.path.length >= 2)
+  const canCopyRef = !!(start && end && drawn && drawn.path.length >= 2)
+
+  /** Download the drawn candidate as a GPX file. */
+  const downloadDrawnGpx = () => {
+    if (!drawn || drawn.path.length < 2) return
+    downloadText('drawn-route.gpx', buildGpx(drawn.path, 'Drawn route'), 'application/gpx+xml')
+    setStatus('Downloaded drawn-route.gpx')
+  }
+
+  /** Copy a compact reference (endpoints + weights + downsampled drawn path) to
+   *  the clipboard so it can be pasted into another tab/machine. */
+  const copyReference = async () => {
+    if (!start || !end || !drawn || drawn.path.length < 2) return
+    try {
+      const text = encodeReference({
+        start,
+        end,
+        options,
+        path: downsamplePath(drawn.path, 300),
+      })
+      await navigator.clipboard.writeText(text)
+      setStatus('Reference copied to clipboard.')
+    } catch (err) {
+      setStatus('Copy failed: ' + (err as Error).message)
+    }
+  }
+
+  /** Validate + apply pasted reference text through the existing loadCase path. */
+  const applyReference = async () => {
+    try {
+      const ref = decodeReference(pasteText)
+      setPasteText('')
+      setPasteOpen(false)
+      await loadCase(referenceToCase(ref))
+    } catch (err) {
+      setStatus('Paste failed: ' + (err as Error).message)
+    }
+  }
+
   // Verdict for the what-if loop.
   let verdict: { text: string; win: boolean } | null = null
   if (optimal && drawn) {
@@ -416,10 +462,42 @@ export default function EvalPage() {
             style={{ display: 'none' }}
             onChange={handleGpxFile}
           />
+          <button className="eval-btn" onClick={downloadDrawnGpx} disabled={!canExport}>
+            Download GPX
+          </button>
+          <button className="eval-btn" onClick={copyReference} disabled={!canCopyRef}>
+            Copy reference
+          </button>
+          <button
+            className={`eval-btn ${pasteOpen ? 'eval-btn-active' : ''}`}
+            onClick={() => setPasteOpen((o) => !o)}
+          >
+            Paste reference
+          </button>
           <button className="eval-btn" onClick={clear}>
             Clear
           </button>
         </section>
+
+        {pasteOpen && (
+          <section className="eval-paste">
+            <textarea
+              className="eval-paste-input"
+              placeholder="Paste a route reference JSON here…"
+              value={pasteText}
+              onChange={(e) => setPasteText(e.target.value)}
+              aria-label="Route reference JSON"
+              rows={4}
+            />
+            <button
+              className="eval-btn eval-btn-primary"
+              onClick={applyReference}
+              disabled={pasteText.trim() === ''}
+            >
+              Apply
+            </button>
+          </section>
+        )}
 
         <label className="eval-snap-toggle">
           <input

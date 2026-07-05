@@ -1,5 +1,5 @@
 import { test, expect } from 'vitest'
-import { parseGpx, downsamplePath, chooseGpxComparison } from './gpx'
+import { parseGpx, downsamplePath, chooseGpxComparison, buildGpx } from './gpx'
 
 const GPX = `<?xml version="1.0"?>
 <gpx version="1.1" creator="test">
@@ -88,4 +88,51 @@ test('chooseGpxComparison falls back to farthest point for an elevation-less loo
   const c = chooseGpxComparison(pts)
   expect(c.note).toMatch(/farthest point/)
   expect(c.end).toEqual({ lat: 40.642, lon: -111.577 })
+})
+
+test('buildGpx round-trips lat/lon through parseGpx', () => {
+  const pts = [
+    { lat: 40.625, lon: -111.57 },
+    { lat: 40.626, lon: -111.568 },
+    { lat: 40.627, lon: -111.566 },
+  ]
+  const parsed = parseGpx(buildGpx(pts, 'Drawn route'))
+  expect(parsed).toEqual(pts)
+})
+
+test('buildGpx emits <ele> only for points that carry a finite elevation', () => {
+  const xml = buildGpx([
+    { lat: 40.625, lon: -111.57, ele: 2100 },
+    { lat: 40.627, lon: -111.566 },
+  ])
+  expect(xml).toContain('<ele>2100</ele>')
+  // Exactly one <ele> element — the elevation-less point omits it.
+  expect(xml.match(/<ele>/g)).toHaveLength(1)
+  const parsed = parseGpx(xml)
+  expect(parsed[0]).toEqual({ lat: 40.625, lon: -111.57, ele: 2100 })
+  expect(parsed[1]).toEqual({ lat: 40.627, lon: -111.566 })
+})
+
+test('buildGpx escapes the track name for XML', () => {
+  const xml = buildGpx(
+    [
+      { lat: 1, lon: 2 },
+      { lat: 3, lon: 4 },
+    ],
+    'A & B <"tricky">',
+  )
+  expect(xml).toContain('<name>A &amp; B &lt;&quot;tricky&quot;&gt;</name>')
+  // Still valid XML after escaping.
+  expect(() => parseGpx(xml)).not.toThrow()
+})
+
+test('buildGpx allows a single point but throws on an empty path', () => {
+  expect(() => buildGpx([])).toThrow(/at least one point/)
+  expect(buildGpx([{ lat: 1, lon: 2 }])).toContain('<trkpt lat="1" lon="2">')
+})
+
+test('buildGpx rejects non-finite / out-of-range coordinates', () => {
+  expect(() => buildGpx([{ lat: NaN, lon: -111 }])).toThrow(/invalid coordinate/)
+  expect(() => buildGpx([{ lat: 91, lon: 0 }])).toThrow(/invalid coordinate/)
+  expect(() => buildGpx([{ lat: 40, lon: 200 }])).toThrow(/invalid coordinate/)
 })

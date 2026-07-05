@@ -132,3 +132,20 @@
   cursor: pointer;
 }
 .eval-trail-count { color: #15803d; font-size: 0.78rem; }
+
+.eval-paste {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0;
+}
+.eval-paste-input {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: monospace;
+  font-size: 0.78rem;
+  padding: 6px 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  resize: vertical;
+}
