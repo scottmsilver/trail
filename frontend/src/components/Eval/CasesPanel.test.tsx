@@ -19,7 +19,20 @@ vi.mock('../../services/download', () => ({
   downloadText: (...args: unknown[]) => downloadText(...args),
 }))
 
+const calculateRoute = vi.fn()
+const getRouteStatus = vi.fn()
+const getRoute = vi.fn()
+vi.mock('../../services/api', () => ({
+  default: {
+    calculateRoute: (...args: unknown[]) => calculateRoute(...args),
+    getRouteStatus: (...args: unknown[]) => getRouteStatus(...args),
+    getRoute: (...args: unknown[]) => getRoute(...args),
+  },
+}))
+
 import CasesPanel, { slug } from './CasesPanel'
+
+const enginePath = [{ lat: 5, lon: 6 }, { lat: 7, lon: 8 }]
 
 beforeEach(() => {
   listCases.mockReset().mockResolvedValue([])
@@ -27,6 +40,10 @@ beforeEach(() => {
   deleteCase.mockReset().mockResolvedValue(undefined)
   buildGpx.mockReset().mockReturnValue('<gpx/>')
   downloadText.mockReset()
+  // Resolve the poll as 'completed' on the first tick so no real 1s sleep runs.
+  calculateRoute.mockReset().mockResolvedValue({ routeId: 'r1' })
+  getRouteStatus.mockReset().mockResolvedValue({ status: 'completed', progress: 100 })
+  getRoute.mockReset().mockResolvedValue({ path: enginePath })
 })
 
 test('slug sanitizes names to id-safe form', () => {
@@ -73,30 +90,37 @@ test('flags saved cases that have no reference path', async () => {
   expect(screen.getByText('no path')).toBeTruthy()
 })
 
-test('offers an enabled GPX download for a case with a reference path and downloads on click', async () => {
+test('GPX computes and downloads the engine route — even for a case with no drawn path', async () => {
+  // Case has an EMPTY referencePath (an engine route), yet GPX is still enabled.
+  listCases.mockResolvedValue([
+    { id: 'e', name: 'Empty', notes: '', start: current.start, end: current.end, options: current.options, referencePath: [], labels: [] },
+  ])
+  buildGpx.mockReturnValue('<gpx-engine/>')
+  render(<CasesPanel current={current} onLoad={() => {}} />)
+  await screen.findByText('Empty')
+  const btn = screen.getByRole('button', { name: /gpx/i })
+  expect((btn as HTMLButtonElement).disabled).toBe(false)
+  fireEvent.click(btn)
+  await waitFor(() => expect(downloadText).toHaveBeenCalledTimes(1))
+  // Computed the engine route from the case's start/end/options...
+  expect(calculateRoute).toHaveBeenCalledWith(current.start, current.end, current.options)
+  expect(getRouteStatus).toHaveBeenCalled()
+  // ...and exported that computed path (not the empty referencePath).
+  expect(buildGpx).toHaveBeenCalledWith(enginePath, 'Empty')
+  expect(downloadText.mock.calls[0][0]).toBe('Empty.gpx')
+  expect(downloadText.mock.calls[0][1]).toBe('<gpx-engine/>')
+  expect(downloadText.mock.calls[0][2]).toBe('application/gpx+xml')
+})
+
+test('surfaces an error and skips the download when route calculation fails', async () => {
+  calculateRoute.mockRejectedValue(new Error('boom'))
   listCases.mockResolvedValue([
     { id: 'p', name: 'HasPath', notes: '', start: current.start, end: current.end, options: current.options, referencePath: [{ lat: 1, lon: 2 }, { lat: 3, lon: 4 }], labels: [] },
   ])
   render(<CasesPanel current={current} onLoad={() => {}} />)
   await screen.findByText('HasPath')
-  const btn = screen.getByRole('button', { name: /gpx/i })
-  expect((btn as HTMLButtonElement).disabled).toBe(false)
-  fireEvent.click(btn)
-  expect(buildGpx).toHaveBeenCalledWith([{ lat: 1, lon: 2 }, { lat: 3, lon: 4 }], 'HasPath')
-  expect(downloadText).toHaveBeenCalledTimes(1)
-  expect(downloadText.mock.calls[0][0]).toBe('HasPath.gpx')
-  expect(downloadText.mock.calls[0][2]).toBe('application/gpx+xml')
-})
-
-test('disables the GPX download for a case with too few reference points', async () => {
-  listCases.mockResolvedValue([
-    { id: 'e', name: 'Empty', notes: '', start: current.start, end: current.end, options: current.options, referencePath: [], labels: [] },
-  ])
-  render(<CasesPanel current={current} onLoad={() => {}} />)
-  await screen.findByText('Empty')
-  const btn = screen.getByRole('button', { name: /gpx/i })
-  expect((btn as HTMLButtonElement).disabled).toBe(true)
-  fireEvent.click(btn)
+  fireEvent.click(screen.getByRole('button', { name: /gpx/i }))
+  await screen.findByText(/GPX export failed: boom/i)
   expect(downloadText).not.toHaveBeenCalled()
 })
 

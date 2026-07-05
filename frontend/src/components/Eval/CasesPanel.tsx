@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import './CasesPanel.css'
 import type { Coordinate, RouteOptions } from '../../services/api'
+import api from '../../services/api'
 import type { EvalCase, EvalLabel } from '../../services/evalApi'
 import { listCases, saveCase, deleteCase } from '../../services/evalApi'
 import { buildGpx } from '../../services/gpx'
@@ -27,6 +28,9 @@ export default function CasesPanel({ current, onLoad }: CasesPanelProps) {
   const [name, setName] = useState('')
   const [notes, setNotes] = useState('')
   const [error, setError] = useState('')
+  // id of the case whose engine route is currently being computed for GPX export
+  // (drives a per-case loading label + disables its button to block double-clicks).
+  const [exportingId, setExportingId] = useState<string | null>(null)
 
   const refresh = async () => {
     try {
@@ -86,14 +90,32 @@ export default function CasesPanel({ current, onLoad }: CasesPanelProps) {
     }
   }
 
-  /** Download a saved case's drawn reference path as a GPX track file. */
-  const handleDownloadGpx = (c: EvalCase) => {
-    if (c.referencePath.length < 2) return
-    const label = c.name || 'case'
+  /** Compute the engine's optimal route for a saved case (start→end + its saved
+   *  weights) and download that computed route as a GPX track. Unlike exporting
+   *  the drawn reference path, this works for every saved case — including engine
+   *  routes that were saved with no drawn path. */
+  const handleDownloadGpx = async (c: EvalCase) => {
+    setExportingId(c.id)
+    setError('')
     try {
-      downloadText(`${label}.gpx`, buildGpx(c.referencePath, label), 'application/gpx+xml')
+      const { routeId } = await api.calculateRoute(c.start, c.end, c.options)
+      let path: Coordinate[] | null = null
+      for (let retries = 0; retries < 30; retries++) {
+        const st = await api.getRouteStatus(routeId)
+        if (st.status === 'completed') {
+          path = (await api.getRoute(routeId)).path
+          break
+        }
+        if (st.status === 'failed') throw new Error(st.message || 'route calculation failed')
+        await new Promise((r) => setTimeout(r, 1000))
+      }
+      if (!path) throw new Error('route did not complete in time')
+      const label = c.name || 'case'
+      downloadText(`${label}.gpx`, buildGpx(path, label), 'application/gpx+xml')
     } catch (e) {
       setError('GPX export failed: ' + (e as Error).message)
+    } finally {
+      setExportingId(null)
     }
   }
 
@@ -157,10 +179,10 @@ export default function CasesPanel({ current, onLoad }: CasesPanelProps) {
                 <button
                   className="cases-btn cases-btn-sm"
                   onClick={() => handleDownloadGpx(c)}
-                  disabled={c.referencePath.length < 2}
-                  title={c.referencePath.length < 2 ? 'No drawn path to export' : 'Download drawn path as GPX'}
+                  disabled={exportingId === c.id}
+                  title="Compute the engine route and download it as GPX"
                 >
-                  GPX
+                  {exportingId === c.id ? 'GPX…' : 'GPX'}
                 </button>
                 <button className="cases-btn cases-btn-sm" onClick={() => handleLabel(c, 'pass')} title="Mark good">
                   ✓
