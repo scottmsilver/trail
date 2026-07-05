@@ -19,7 +19,7 @@ from rasterio.transform import Affine, from_bounds
 
 from app.engine_v2.elevation import Bounds, TwoLayerElevationLibrary
 from app.engine_v2.elevation_fd_safe import FDManagedElevationLibrary
-from app.engine_v2.path_layer import PathLayer, PathType
+from app.engine_v2.path_layer import PathLayer, PathType, osm_disabled
 from app.engine_v2.pathfinder import TerrainAwarePathfinder
 from app.engine_v2.scoring import dominant_factor, rasterize_segment, score_polyline_cells
 from app.engine_v2.snapping import densify_polyline, snap_polyline_to_lines
@@ -117,7 +117,11 @@ class TrailFinderServiceV2:
         self.elevation_lib = elevation_lib or FDManagedElevationLibrary(
             TwoLayerElevationLibrary(data_dir=self._data_dir, resolution=resolution), max_open_files=50
         )
-        self.path_layer = path_layer or PathLayer(cache_dir=self._cache_dir)
+        # Fail loudly if obstacle/water data can't be loaded — UNLESS OSM is
+        # explicitly disabled (then terrain-only routing is the chosen behavior).
+        # We serve OSM locally, so a fetch failure is a real problem, not a cue
+        # to silently route across unmodeled water.
+        self.path_layer = path_layer or PathLayer(cache_dir=self._cache_dir, strict_obstacles=not osm_disabled())
         # Shared library + close_all() clears all open datasets, so data
         # loading must be serialized per service instance.
         self._data_lock = threading.Lock()
@@ -307,7 +311,11 @@ class TrailFinderServiceV2:
 
             terrain_grid = self.path_layer.get_grid(bounds, elevation.shape, transform)
         if not (terrain_grid != PathType.UNKNOWN).any():
-            warnings.append("OSM data unavailable — terrain-only routing")
+            warnings.append(
+                "OSM disabled — terrain-only routing (water/obstacles NOT modeled)"
+                if osm_disabled()
+                else "OSM data unavailable — terrain-only routing"
+            )
 
         return elevation, transform, terrain_grid, warnings
 

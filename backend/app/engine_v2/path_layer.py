@@ -72,15 +72,45 @@ PATH_TAGS = {
     "piste:type": ["downhill", "nordic", "sled", "hike", "skitour", "connection"],
 }
 
-# Ported from ObstacleConfig.get_default_osm_tags()
+# Ported from ObstacleConfig.get_default_osm_tags(), then broadened so bodies of
+# water are caught however OSM tags them. Water is mapped inconsistently:
+# lakes/ponds are usually `natural=water` but also carry `water=pond|lake|...`;
+# reservoirs/basins are often only `landuse=reservoir|basin`; wide rivers appear
+# as `waterway=riverbank` polygons. Missing any of these lets a route cross the
+# water body. `water: True` fetches every `water=*` area regardless of `natural`.
 OBSTACLE_TAGS = {
-    "natural": ["water", "wetland", "cliff", "rock", "scree"],
-    "waterway": ["river", "stream", "canal"],
-    "landuse": ["industrial", "commercial", "military"],
+    "natural": ["water", "wetland", "bay", "cliff", "rock", "scree"],
+    "water": True,
+    "waterway": ["river", "stream", "canal", "riverbank", "dock"],
+    "landuse": ["industrial", "commercial", "military", "reservoir", "basin"],
     "building": True,
     "leisure": ["golf_course", "swimming_pool"],
     "barrier": True,
 }
+
+# OSM often maps a river/canal as a bare centerline (LineString) with no width.
+# Rasterized with all_touched that is only a ~1-cell strip, which barely blocks a
+# real river. Buffer such major line-waterways to a modest real width before
+# rasterizing so they block like the water they represent. Area water (polygons)
+# already fills solidly and is left untouched. Streams stay a centerline: they
+# are generally fordable and buffering them would wall off legitimate crossings.
+_WATERWAY_BUFFER_DEG = 0.00008  # ~9 m at these latitudes
+_BUFFERED_WATERWAYS = {"river", "canal", "riverbank"}
+_MAX_WATERWAY_COORDS = 10000  # skip buffering absurdly complex lines (cost guard)
+
+
+class ObstacleDataUnavailableError(ValueError):
+    """Raised when obstacle/water data cannot be loaded for part of a route and
+    the caller requires it (strict mode). Prevents silently routing across
+    unmodeled water. Subclasses ValueError so API layers surface it as a 400."""
+
+
+def osm_disabled() -> bool:
+    """True when OSM fetching is explicitly turned off (OSM_DISABLE). This is an
+    opt-in to terrain-only routing; when it's off we expect OSM to be reachable
+    (e.g. a local Overpass) and treat a fetch failure as a hard error."""
+    return os.environ.get("OSM_DISABLE") in ("1", "true", "True")
+
 
 _TRAIL_HIGHWAYS = {"path", "track", "trail", "bridleway"}
 _PATH_HIGHWAYS = {"steps", "cycleway"}
@@ -146,6 +176,33 @@ _PRECEDENCE = [
 ]
 
 
+def _buffer_line_waterway(geom, row):
+    """Give a line-geometry major waterway (river/canal/riverbank centerline) a
+    real width so it blocks like the water body it represents. Polygons, points
+    and minor waterways (streams) are returned unchanged."""
+    if getattr(geom, "geom_type", "") not in ("LineString", "MultiLineString"):
+        return geom
+    tags = row.to_dict() if hasattr(row, "to_dict") else dict(row)
+    if _tag(tags, "waterway") not in _BUFFERED_WATERWAYS:
+        return geom
+    # Guard against a pathologically complex geometry making .buffer() expensive;
+    # such a line already rasterizes as a barrier, so skip the buffer rather than
+    # pay for it. Route bounds are distance-capped upstream, but this is cheap.
+    if _num_coords(geom) > _MAX_WATERWAY_COORDS:
+        return geom
+    return geom.buffer(_WATERWAY_BUFFER_DEG)
+
+
+def _num_coords(geom) -> int:
+    """Total coordinate count of a (Multi)LineString, best-effort."""
+    try:
+        if geom.geom_type == "LineString":
+            return len(geom.coords)
+        return sum(len(g.coords) for g in geom.geoms)
+    except Exception:
+        return 0
+
+
 def rasterize_features(paths_gdf, obstacles_gdf, shape, transform) -> np.ndarray:
     """
     Rasterize classified OSM features onto a grid of PathType codes.
@@ -172,7 +229,7 @@ def rasterize_features(paths_gdf, obstacles_gdf, shape, transform) -> np.ndarray
             geom = row.get("geometry")
             if geom is None or geom.is_empty:
                 continue
-            shapes_by_type[PathType.OBSTACLE].append(geom)
+            shapes_by_type[PathType.OBSTACLE].append(_buffer_line_waterway(geom, row))
 
     for ptype in _PRECEDENCE:
         geoms = shapes_by_type[ptype]
@@ -203,13 +260,12 @@ def _default_fetch(bounds, tags):
     # here (caught by _safe_fetch) degrades to terrain-only routing instantly,
     # instead of osmnx splitting the polygon into sub-queries and retrying each
     # against an unreachable host (a multi-minute stall per route).
-    if os.environ.get("OSM_DISABLE") in ("1", "true", "True"):
+    if osm_disabled():
         raise RuntimeError("OSM disabled via OSM_DISABLE")
 
     import osmnx as ox
-    from shapely.geometry import box as shapely_box
-
     from app.services.osm_settings import apply_osm_settings, overpass_urls
+    from shapely.geometry import box as shapely_box
 
     apply_osm_settings(ox)
     ox.settings.log_console = False
@@ -279,10 +335,21 @@ class PathLayer:
     route's exact shape/transform.
     """
 
-    def __init__(self, cache_dir: str, fetch_fn: Optional[Callable] = None, tile_deg: Optional[float] = None):
+    def __init__(
+        self,
+        cache_dir: str,
+        fetch_fn: Optional[Callable] = None,
+        tile_deg: Optional[float] = None,
+        strict_obstacles: bool = False,
+    ):
         self.cache_dir = cache_dir
         self.fetch_fn = fetch_fn or _default_fetch
         self.tile_deg = tile_deg if tile_deg is not None else float(os.environ.get("OSM_TILE_DEG", _DEFAULT_TILE_DEG))
+        # When True, get_grid raises ObstacleDataUnavailableError instead of
+        # silently degrading to an obstacle-free (water-crossing) grid if a tile's
+        # OSM data can't be loaded. The service turns this on whenever OSM isn't
+        # explicitly disabled, so a real Overpass outage fails loudly.
+        self.strict_obstacles = strict_obstacles
         os.makedirs(cache_dir, exist_ok=True)
 
     @staticmethod
@@ -339,6 +406,17 @@ class PathLayer:
         missing = [(ti, tj) for ti, tj in tiles if not os.path.exists(self._tile_cache(ti, tj))]
         if missing:
             self._fetch_and_cache_tiles(missing)
+
+        # A tile still missing after the fetch attempt means the OSM/obstacle
+        # query failed (a successful fetch caches even an empty tile). In strict
+        # mode refuse to route rather than silently drop that tile's water.
+        still_missing = [(ti, tj) for ti, tj in tiles if not os.path.exists(self._tile_cache(ti, tj))]
+        if still_missing and self.strict_obstacles:
+            raise ObstacleDataUnavailableError(
+                f"OSM obstacle/water data unavailable for {len(still_missing)} of {len(tiles)} tile(s); "
+                "refusing to route to avoid crossing unmodeled water. "
+                "Set OSM_DISABLE=1 to force terrain-only routing."
+            )
 
         paths, obstacles = [], []
         for ti, tj in tiles:
