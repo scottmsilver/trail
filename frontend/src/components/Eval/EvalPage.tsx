@@ -68,12 +68,14 @@ export default function EvalPage() {
   // "Go via this trail": snap the drawn candidate onto nearby trails before
   // scoring. Default on (per design); degrades to exact-drawn where no trail.
   const [snap, setSnap] = useState<'none' | 'trail'>('trail')
-  // Overlay the engine's trail/path network for the current viewport.
-  const [showTrails, setShowTrails] = useState(false)
+  // Overlay the engine's trail/path network for the current viewport. On by
+  // default so it's always clear what the engine can route on.
+  const [showTrails, setShowTrails] = useState(true)
   const [trailCount, setTrailCount] = useState<number | null>(null)
   // Mark notable terrain (glaciers, water, cliffs, ...) so it's clear what a
-  // route crosses — e.g. a glacier that reads like a pond on the base map.
-  const [showTerrain, setShowTerrain] = useState(false)
+  // route crosses — e.g. a glacier that reads like a pond on the base map. On by
+  // default so passable-but-notable terrain is visible without toggling.
+  const [showTerrain, setShowTerrain] = useState(true)
   const [terrainKinds, setTerrainKinds] = useState<string[]>([])
   // Expertise route family: one line per hiker level (casual…alpinist) for the
   // same start/end, each toggleable on the map.
