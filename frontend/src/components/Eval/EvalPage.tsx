@@ -80,6 +80,11 @@ export default function EvalPage() {
   const [variants, setVariants] = useState<RouteVariant[] | null>(null)
   const [visibleLevels, setVisibleLevels] = useState<Record<string, boolean>>({})
   const [familyRunning, setFamilyRunning] = useState(false)
+  // Set when the backend flags that some OSM tiles for the route area couldn't
+  // be loaded (route may cross unmodeled water/obstacles). Offers a force-reload.
+  const [osmMissing, setOsmMissing] = useState(false)
+  // Which action ran last, so the OSM reload button repeats the right one.
+  const lastRunRef = useRef<'optimal' | 'family' | null>(null)
   // Copy/paste route reference: a small textarea (toggled) for pasting a shared
   // reference JSON and applying it via the existing loadCase restore path.
   const [pasteOpen, setPasteOpen] = useState(false)
@@ -124,6 +129,7 @@ export default function EvalPage() {
     const e = endRef.current
     if (!s || !e) return
     setRunning(true)
+    setOsmMissing(false)
     setStatus('Running…')
     try {
       const { routeId } = await api.calculateRoute(s, e, opts)
@@ -132,7 +138,9 @@ export default function EvalPage() {
         const st = await api.getRouteStatus(routeId)
         setStatus(`Running… ${st.progress}%`)
         if (st.status === 'completed') {
-          path = (await api.getRoute(routeId)).path
+          const res = await api.getRoute(routeId)
+          path = res.path
+          setOsmMissing(!!res.stats?.osmDataMissing)
           break
         }
         if (st.status === 'failed') throw new Error(st.message || 'route calculation failed')
@@ -143,6 +151,7 @@ export default function EvalPage() {
       const scored = await scorePath(path, opts)
       setOptimal(scored)
       ranOnceRef.current = true
+      lastRunRef.current = 'optimal'
       setStatus(`Optimal scored (cost ${formatCost(scored.totalCost)}).`)
     } catch (err) {
       setStatus('Error: ' + (err as Error).message)
@@ -153,15 +162,18 @@ export default function EvalPage() {
 
   /** Route the same start→end at every expertise level in one call and show the
    *  family. Identical lines are drawn once (backend marks them `duplicateOf`). */
-  const runFamily = async () => {
+  const runFamily = async (extra: Partial<RouteOptions> = {}) => {
     const s = startRef.current
     const e = endRef.current
     if (!s || !e) return
     setFamilyRunning(true)
+    setOsmMissing(false)
     setStatus('Routing expertise family…')
     try {
-      const vs = await getRouteVariants(s, e, options)
+      const vs = await getRouteVariants(s, e, { ...options, ...extra })
       setVariants(vs)
+      setOsmMissing(vs.some((v) => (v.stats as { osmDataMissing?: boolean }).osmDataMissing === true))
+      lastRunRef.current = 'family'
       // Show every level by default; the legend toggles remove them.
       setVisibleLevels(Object.fromEntries(vs.map((v) => [v.level, true])))
       const distinct = vs.filter((v) => v.path.length > 0 && !v.duplicateOf).length
@@ -171,6 +183,12 @@ export default function EvalPage() {
     } finally {
       setFamilyRunning(false)
     }
+  }
+
+  /** Force-refresh the area's OSM tiles and repeat whichever run was last. */
+  const reloadOsm = () => {
+    if (lastRunRef.current === 'family') runFamily({ refreshOsm: true })
+    else runOptimal({ ...options, refreshOsm: true })
   }
 
   const toggleLevel = (level: string) =>
@@ -555,12 +573,21 @@ export default function EvalPage() {
           variants={variants}
           visible={visibleLevels}
           onToggle={toggleLevel}
-          onRun={runFamily}
+          onRun={() => runFamily()}
           disabled={!start || !end}
           running={familyRunning}
         />
 
         <div className="eval-status">{status || 'Click the map to set start, then end.'}</div>
+
+        {osmMissing && (
+          <div className="eval-osm-warning" role="alert">
+            ⚠ OSM data was missing for part of this route — it may cross unmodeled water/obstacles.
+            <button type="button" onClick={reloadOsm} disabled={running || familyRunning}>
+              Reload OSM data
+            </button>
+          </div>
+        )}
 
         {verdict && (
           <div className={`eval-verdict ${verdict.win ? 'eval-verdict-win' : 'eval-verdict-lose'}`}>

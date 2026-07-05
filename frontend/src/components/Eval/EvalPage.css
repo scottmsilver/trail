@@ -123,6 +123,32 @@
   border: 1px solid #fde047;
 }
 
+.eval-osm-warning {
+  margin: 8px 0;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: #fef3c7;
+  border: 1px solid #fcd34d;
+  color: #92400e;
+  font-size: 0.85rem;
+  line-height: 1.35;
+}
+.eval-osm-warning button {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 3px 8px;
+  border: 1px solid #d97706;
+  border-radius: 5px;
+  background: #f59e0b;
+  color: #fff;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.eval-osm-warning button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .eval-snap-toggle {
   display: flex;
   align-items: center;
