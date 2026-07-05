@@ -207,15 +207,16 @@ def _default_fetch(bounds, tags):
         raise RuntimeError("OSM disabled via OSM_DISABLE")
 
     import osmnx as ox
-    from app.services.osm_settings import apply_osm_settings
     from shapely.geometry import box as shapely_box
+
+    from app.services.osm_settings import apply_osm_settings, overpass_urls
 
     apply_osm_settings(ox)
     ox.settings.log_console = False
     ox.settings.requests_timeout = int(os.environ.get("OVERPASS_TIMEOUT", "30"))
     bbox = shapely_box(bounds.west, bounds.south, bounds.east, bounds.north)
 
-    endpoints = [u.strip() for u in os.environ.get("OVERPASS_URLS", "").split(",") if u.strip()]
+    endpoints = overpass_urls()
     if not endpoints:
         return ox.features_from_polygon(bbox, tags)
 
