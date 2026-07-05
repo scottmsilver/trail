@@ -23,6 +23,8 @@ from app.services.eval_store import EvalStore
 from app.services.obstacle_config import ObstaclePresets
 from app.services.path_preferences import PathPreferencePresets, PathPreferences
 from app.services.trail_finder import TrailFinderService
+from fastapi import BackgroundTasks, FastAPI, HTTPException, status
+from fastapi.middleware.cors import CORSMiddleware
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -363,9 +365,8 @@ async def get_route(route_id: str):
 @app.get("/api/routes/{route_id}/gpx")
 async def download_gpx(route_id: str):
     """Download route as GPX file"""
-    from fastapi.responses import Response
-
     from app.services.gpx_generator import GPXGenerator
+    from fastapi.responses import Response
 
     if route_id not in routes_storage:
         raise HTTPException(status_code=404, detail="Route not found")
@@ -424,9 +425,8 @@ async def download_gpx(route_id: str):
 @app.post("/api/routes/export/gpx")
 async def export_route_as_gpx(request: RouteRequest):
     """Export a route directly as GPX without storing it"""
-    from fastapi.responses import Response
-
     from app.services.gpx_generator import GPXGenerator
+    from fastapi.responses import Response
 
     # Get configurations based on user profile and custom options
     profile = request.options.userProfile if request.options else "default"
@@ -870,6 +870,9 @@ async def get_osm_data_at_point(request: dict):
         path_preferences = PathPreferencePresets.trail_seeker()
 
         # Fetch OSM features at this location
+        from app.services.osm_settings import apply_osm_settings
+
+        apply_osm_settings(ox)
         ox.settings.log_console = False
         logger.info(f"Fetching OSM data for ({lat}, {lon}) with buffer {bbox_buffer}")
         features = ox.features_from_polygon(bbox, path_preferences.preferred_path_tags)
