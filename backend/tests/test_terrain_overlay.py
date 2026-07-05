@@ -54,3 +54,16 @@ def test_get_terrain_polygons_empty_on_fetch_failure(tmp_path):
         raise RuntimeError("overpass down")
 
     assert _layer(broken, tmp_path).get_terrain_polygons(_BOUNDS) == []
+
+
+def test_get_terrain_polygons_caps_feature_count(tmp_path):
+    from app.engine_v2.path_layer import _MAX_TERRAIN_FEATURES
+
+    poly = Polygon([(-111.588, 40.650), (-111.587, 40.650), (-111.587, 40.652), (-111.588, 40.652)])
+    n = _MAX_TERRAIN_FEATURES + 500
+
+    def fake(bounds, tags):
+        return gpd.GeoDataFrame({"natural": ["water"] * n}, geometry=[poly] * n, crs="EPSG:4326")
+
+    out = _layer(fake, tmp_path).get_terrain_polygons(_BOUNDS)
+    assert len(out) <= _MAX_TERRAIN_FEATURES

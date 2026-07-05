@@ -107,6 +107,11 @@ TERRAIN_DISPLAY_TAGS = {
     "water": True,
     "landuse": ["reservoir", "basin"],
 }
+# Hard caps so a pathological/huge OSM response can't blow up the backend
+# (memory/JSON) or the frontend (Leaflet polygon count). The overlay is a rough
+# marker, not a survey — dropping the tail past these limits is fine.
+_MAX_TERRAIN_FEATURES = 2000
+_MAX_TERRAIN_VERTICES = 120000
 
 
 def terrain_kind(tags: dict) -> str:
@@ -285,9 +290,8 @@ def _default_fetch(bounds, tags):
         raise RuntimeError("OSM disabled via OSM_DISABLE")
 
     import osmnx as ox
-    from shapely.geometry import box as shapely_box
-
     from app.services.osm_settings import apply_osm_settings, overpass_urls
+    from shapely.geometry import box as shapely_box
 
     apply_osm_settings(ox)
     ox.settings.log_console = False
@@ -409,7 +413,10 @@ class PathLayer:
         if gdf is None or len(gdf) == 0:
             return []
         out: List[dict] = []
+        total_vertices = 0
         for _, row in gdf.iterrows():
+            if len(out) >= _MAX_TERRAIN_FEATURES or total_vertices >= _MAX_TERRAIN_VERTICES:
+                break
             geom = row.get("geometry")
             if geom is None or geom.is_empty or geom.geom_type not in ("Polygon", "MultiPolygon"):
                 continue
@@ -419,6 +426,9 @@ class PathLayer:
                 ring = [[lat, lon] for lon, lat in part.exterior.coords]
                 if len(ring) >= 4:
                     out.append({"kind": kind, "polygon": ring})
+                    total_vertices += len(ring)
+                    if len(out) >= _MAX_TERRAIN_FEATURES or total_vertices >= _MAX_TERRAIN_VERTICES:
+                        break
         return out
 
     def _fetch_and_cache_tiles(self, missing):
