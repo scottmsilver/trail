@@ -66,3 +66,12 @@ async def test_v1_multipoint_is_rejected(monkeypatch):
 
     assert main.routes_storage[rid]["status"] == main.RouteStatus.FAILED
     assert "v1" in main.routes_storage[rid]["message"]
+
+
+def test_v1_multipoint_gpx_export_rejected():
+    from fastapi.testclient import TestClient
+
+    client = TestClient(main.app)
+    resp = client.post("/api/routes/export/gpx", json={"points": [A, B, C], "options": {"engine": "v1"}})
+    assert resp.status_code == 400
+    assert "v2" in resp.json()["detail"]

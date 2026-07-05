@@ -446,6 +446,11 @@ async def export_route_as_gpx(request: RouteRequest):
     points = request.normalized_points()
     options_dict = request.options.model_dump() if request.options else {}
     engine = request.options.engine if request.options else "v2"
+    if engine != "v2" and len(points) > 2:
+        raise HTTPException(
+            status_code=400,
+            detail="Multi-waypoint GPX export requires engine v2; v1 supports start/end only.",
+        )
     if engine == "v2" and len(points) > 2:
         path, stats = await trail_finder_v2.find_multi_route(points, options_dict)
     else:
