@@ -291,7 +291,7 @@ export default function EvalPage() {
   }
 
   const canExport = !!(drawn && drawn.path.length >= 2)
-  const canCopyRef = !!(start && end && drawn && drawn.path.length >= 2)
+  const canCopyRef = !!(start && end)
 
   /** Download the drawn candidate as a GPX file. */
   const downloadDrawnGpx = () => {
@@ -300,16 +300,18 @@ export default function EvalPage() {
     setStatus('Downloaded drawn-route.gpx')
   }
 
-  /** Copy a compact reference (endpoints + weights + downsampled drawn path) to
-   *  the clipboard so it can be pasted into another tab/machine. */
+  /** Copy a compact reference (endpoints + weights + optional drawn path) to the
+   *  clipboard so a routing case can be pasted back to reproduce it. Only start +
+   *  end are required — a drawn path is included when present but not needed, so
+   *  an engine route (no drawing) can be shared too. */
   const copyReference = async () => {
-    if (!start || !end || !drawn || drawn.path.length < 2) return
+    if (!start || !end) return
     try {
       const text = encodeReference({
         start,
         end,
         options,
-        path: downsamplePath(drawn.path, 300),
+        path: drawn && drawn.path.length >= 2 ? downsamplePath(drawn.path, 300) : [],
       })
       await navigator.clipboard.writeText(text)
       setStatus('Reference copied to clipboard.')
