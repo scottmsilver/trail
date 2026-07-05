@@ -26,23 +26,24 @@ describe('TrailAPI', () => {
   })
 
   describe('calculateRoute', () => {
-    it('sends route calculation request', async () => {
+    it('sends an ordered points list', async () => {
       const mockResponse = {
         data: { routeId: 'test-123', status: 'processing' }
       }
       mockClient.post.mockResolvedValue(mockResponse)
 
-      const result = await api.calculateRoute(
+      const points = [
         { lat: 40.630, lon: -111.580 },
-        { lat: 40.650, lon: -111.560 }
-      )
+        { lat: 40.640, lon: -111.570 },
+        { lat: 40.650, lon: -111.560 },
+      ]
+      const result = await api.calculateRoute(points, { engine: 'v2' })
 
       expect(mockClient.post).toHaveBeenCalledWith(
         '/api/routes/calculate',
         {
-          start: { lat: 40.630, lon: -111.580 },
-          end: { lat: 40.650, lon: -111.560 },
-          options: {}
+          points,
+          options: { engine: 'v2' },
         }
       )
       expect(result).toEqual(mockResponse.data)
@@ -54,12 +55,13 @@ describe('TrailAPI', () => {
       }
       mockClient.post.mockResolvedValue(mockResponse)
 
-      const options = { avoidSteep: true, buffer: 0.02 }
-      await api.calculateRoute(
+      const points = [
         { lat: 40.630, lon: -111.580 },
+        { lat: 40.640, lon: -111.570 },
         { lat: 40.650, lon: -111.560 },
-        options
-      )
+      ]
+      const options = { avoidSteep: true, buffer: 0.02 }
+      await api.calculateRoute(points, options)
 
       expect(mockClient.post).toHaveBeenCalledWith(
         '/api/routes/calculate',

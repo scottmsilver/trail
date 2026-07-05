@@ -122,13 +122,11 @@ export class TrailAPI {
   }
 
   async calculateRoute(
-    start: Coordinate,
-    end: Coordinate,
+    points: Coordinate[],
     options: RouteOptions = {}
   ): Promise<RouteResponse> {
     const response = await this.client.post<RouteResponse>('/api/routes/calculate', {
-      start,
-      end,
+      points,
       options,
     })
     return response.data
@@ -182,13 +180,11 @@ export class TrailAPI {
   }
 
   async exportRouteAsGPX(
-    start: Coordinate,
-    end: Coordinate,
+    points: Coordinate[],
     options: RouteOptions = {}
   ): Promise<Blob> {
     const response = await this.client.post('/api/routes/export/gpx', {
-      start,
-      end,
+      points,
       options,
     }, {
       responseType: 'blob',

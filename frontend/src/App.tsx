@@ -96,7 +96,7 @@ function App() {
 
     try {
       // Use the imported api instance with all route options
-      const response = await api.calculateRoute(start, end, routeOptions)
+      const response = await api.calculateRoute([start, end], routeOptions)
 
       // Poll for status
       let retries = 0
@@ -217,7 +217,7 @@ function App() {
           return
         }
 
-        const blob = await api.exportRouteAsGPX(start, end, routeOptions)
+        const blob = await api.exportRouteAsGPX([start, end], routeOptions)
         const url = window.URL.createObjectURL(blob)
         const a = document.createElement('a')
         a.href = url

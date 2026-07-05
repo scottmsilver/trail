@@ -107,7 +107,7 @@ export default function EvalPage() {
     setRunning(true)
     setStatus('Running…')
     try {
-      const { routeId } = await api.calculateRoute(s, e, opts)
+      const { routeId } = await api.calculateRoute([s, e], opts)
       let path: Coordinate[] | null = null
       for (let retries = 0; retries < 30; retries++) {
         const st = await api.getRouteStatus(routeId)
