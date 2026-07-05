@@ -73,6 +73,11 @@ class RouteOptions(BaseModel):
         le=3.0,
         description="v2 only: A* heuristic weight. 1.0 = optimal, higher = faster/greedier",
     )
+    refreshOsm: bool = Field(
+        False,
+        description="v2 only: force a re-fetch of the route area's OSM tiles, ignoring the "
+        "cache and failure cooldown (the 'Reload OSM data' action).",
+    )
 
     @validator("customSlopeCosts")
     def validate_slope_order(cls, v):

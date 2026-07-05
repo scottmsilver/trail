@@ -7,17 +7,10 @@ Covers three gaps that let routes cross bodies of water:
 """
 
 import geopandas as gpd
-import pytest
 from rasterio.transform import from_bounds
 from shapely.geometry import LineString, Polygon
 
-from app.engine_v2.path_layer import (
-    OBSTACLE_TAGS,
-    ObstacleDataUnavailableError,
-    PathLayer,
-    PathType,
-    rasterize_features,
-)
+from app.engine_v2.path_layer import OBSTACLE_TAGS, PathLayer, PathType, rasterize_features
 
 
 # --- 1. tag coverage --------------------------------------------------------
@@ -78,10 +71,14 @@ def _broken_fetch(bounds, tags):
     raise RuntimeError("overpass unreachable")
 
 
-def test_get_grid_strict_raises_when_obstacle_data_unavailable(tmp_path):
+def test_get_grid_strict_reports_missing_without_raising(tmp_path):
+    # Strict mode no longer hard-fails: it reports missing tiles via missing_out
+    # so the caller can flag "OSM data missing" and offer a force-refresh.
     layer = PathLayer(cache_dir=str(tmp_path), fetch_fn=_broken_fetch, strict_obstacles=True)
-    with pytest.raises(ObstacleDataUnavailableError):
-        layer.get_grid(_BOUNDS, _SHAPE, _TRANSFORM)
+    missing = []
+    grid = layer.get_grid(_BOUNDS, _SHAPE, _TRANSFORM, missing_out=missing)
+    assert grid.shape == _SHAPE
+    assert len(missing) > 0
 
 
 def test_get_grid_nonstrict_degrades_gracefully(tmp_path):

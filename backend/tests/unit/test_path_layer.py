@@ -182,6 +182,9 @@ class TestPathLayer:
             return _gdf([(trail, {"highway": "path"})])
 
         layer.fetch_fn = working_fetch
+        # A failed fetch now backs off for a cooldown before retrying; expire it so
+        # this recovery check exercises the refetch immediately (not the cooldown).
+        layer._fetch_failed_at.clear()
         grid2 = layer.get_grid(BOUNDS, SHAPE, TRANSFORM)
         assert len(calls) == 4  # re-fetched: two more calls
         assert (grid2 == PathType.TRAIL).any()

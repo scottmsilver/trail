@@ -270,21 +270,27 @@ class TrailFinderServiceV2:
     def _load_pathfinder(self, bounds, options):
         """Load elevation + terrain for ``bounds`` and build a configured
         pathfinder. Shared by routing and eval scoring so both observe identical
-        cost inputs. Returns ``(pathfinder, warnings)``.
+        cost inputs. Returns ``(pathfinder, warnings, osm_status)``.
         """
-        elevation, transform, terrain_grid, warnings = self._load_terrain(bounds)
-        return self._make_pathfinder(elevation, transform, terrain_grid, options), warnings
+        elevation, transform, terrain_grid, warnings, osm_status = self._load_terrain(bounds, options)
+        return self._make_pathfinder(elevation, transform, terrain_grid, options), warnings, osm_status
 
-    def _load_terrain(self, bounds):
+    def _load_terrain(self, bounds, options=None):
         """Load elevation + terrain grid for ``bounds`` once, so callers that
         build several pathfinders over the same area (route variants) don't
-        re-download. Returns ``(elevation, transform, terrain_grid, warnings)``.
+        re-download. Returns ``(elevation, transform, terrain_grid, warnings,
+        osm_status)`` where ``osm_status`` flags missing OSM data.
+
+        ``options.refreshOsm`` forces a re-fetch of the area's OSM tiles
+        (ignoring cache + failure cooldown) — the "Reload OSM data" action.
 
         Shared library + close_all() clears all open datasets, so loading is
         serialized per service instance; the lock also serializes PathLayer's
         non-atomic npy cache write.
         """
         warnings: List[str] = []
+        refresh = bool((options or {}).get("refreshOsm"))
+        missing_tiles: List = []
         with self._data_lock:
             self.elevation_lib.load_area(bounds)
             elevation, meta = self.elevation_lib.get_elevation_array(bounds)
@@ -309,7 +315,9 @@ class TrailFinderServiceV2:
             if hasattr(self.elevation_lib, "close_all"):
                 self.elevation_lib.close_all()
 
-            terrain_grid = self.path_layer.get_grid(bounds, elevation.shape, transform)
+            terrain_grid = self.path_layer.get_grid(
+                bounds, elevation.shape, transform, refresh=refresh, missing_out=missing_tiles
+            )
         if not (terrain_grid != PathType.UNKNOWN).any():
             warnings.append(
                 "OSM disabled — terrain-only routing (water/obstacles NOT modeled)"
@@ -317,7 +325,19 @@ class TrailFinderServiceV2:
                 else "OSM data unavailable — terrain-only routing"
             )
 
-        return elevation, transform, terrain_grid, warnings
+        # When OSM is expected to be available (not explicitly disabled) but some
+        # tiles couldn't be loaded, return the route AND flag the gap so the UI can
+        # warn and offer a force-refresh — rather than silently crossing unmodeled
+        # water or hard-failing the request.
+        osm_status: dict = {}
+        if missing_tiles and not osm_disabled():
+            osm_status = {"osmDataMissing": True, "osmMissingTiles": len(missing_tiles)}
+            warnings.append(
+                f"OSM data missing for {len(missing_tiles)} area tile(s) — the route may cross "
+                "unmodeled water/obstacles. Use “Reload OSM data” to refetch."
+            )
+
+        return elevation, transform, terrain_grid, warnings, osm_status
 
     async def score_path(self, path: List[Coordinate], options: dict) -> ScoredPath:
         """Score an arbitrary polyline with the engine's cost function (async)."""
@@ -421,7 +441,7 @@ class TrailFinderServiceV2:
         sw, ne = self._validate_path_extent(path)
         # Bounding box covering the whole polyline plus a small margin.
         bounds = self.calculate_bounding_box(sw, ne, self._score_buffer(options))
-        pf, _warnings = self._load_pathfinder(bounds, options)
+        pf, _warnings, _osm_status = self._load_pathfinder(bounds, options)
 
         # Clamp vertices into the grid: a point on the bbox max edge truncates to
         # index == shape, and numpy would wrap a negative index into a wrong cost.
@@ -467,18 +487,20 @@ class TrailFinderServiceV2:
 
     def _find_route_sync(self, start, end, options):
         bounds = self.calculate_bounding_box(start, end, options.get("buffer"))
-        pf, warnings = self._load_pathfinder(bounds, options)
+        pf, warnings, osm_status = self._load_pathfinder(bounds, options)
         result = pf.find_path(start.lat, start.lon, end.lat, end.lon)
         if result is None:
             stats = {"error": "No route found", "engine": "v2"}
             if warnings:
                 stats["warnings"] = warnings
+            stats.update(osm_status)
             return [], stats
 
         raw_path, stats = result
         stats["engine"] = "v2"
         if warnings:
             stats["warnings"] = warnings
+        stats.update(osm_status)
         self._augment_client_stats(raw_path, stats)
         path = [Coordinate(lat=lat, lon=lon) for (lat, lon, _elev) in raw_path]
         return path, stats
@@ -511,7 +533,7 @@ class TrailFinderServiceV2:
         levels = list(dict.fromkeys(levels))
 
         bounds = self.calculate_bounding_box(start, end, options.get("buffer"))
-        elevation, transform, terrain_grid, warnings = self._load_terrain(bounds)
+        elevation, transform, terrain_grid, warnings, osm_status = self._load_terrain(bounds, options)
 
         variants: List[dict] = []
         seen: dict = {}  # rounded path key -> first level that produced it
@@ -523,12 +545,14 @@ class TrailFinderServiceV2:
                 stats = {"error": "No route found", "engine": "v2"}
                 if warnings:
                     stats["warnings"] = warnings
+                stats.update(osm_status)
                 entry.update(path=[], stats=stats)
             else:
                 raw_path, stats = result
                 stats["engine"] = "v2"
                 if warnings:
                     stats["warnings"] = warnings
+                stats.update(osm_status)
                 self._augment_client_stats(raw_path, stats)
                 key = tuple((round(lat, 6), round(lon, 6)) for (lat, lon, _z) in raw_path)
                 if key in seen:

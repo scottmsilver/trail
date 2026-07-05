@@ -10,12 +10,13 @@
 """Unit tests for TrailFinderServiceV2 using injected fakes (no network)."""
 import numpy as np
 import pytest
+from rasterio.transform import from_bounds
+
 from app.engine_v2.elevation import Bounds
 from app.engine_v2.elevation_fd_safe import FDManagedElevationLibrary
 from app.engine_v2.path_layer import PathType
 from app.engine_v2.service import TrailFinderServiceV2
 from app.models.route import Coordinate
-from rasterio.transform import from_bounds
 
 SHAPE = (30, 30)
 
@@ -39,7 +40,7 @@ class FakePathLayer:
     def __init__(self, fill=PathType.UNKNOWN):
         self.fill = fill
 
-    def get_grid(self, bounds, shape, transform):
+    def get_grid(self, bounds, shape, transform, refresh=False, missing_out=None):
         return np.full(shape, self.fill, dtype=np.uint8)
 
 
