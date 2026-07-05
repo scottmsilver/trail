@@ -1,0 +1,55 @@
+.expertise-panel {
+  margin-top: 0.75rem;
+  border-top: 1px solid #e2e8f0;
+  padding-top: 0.75rem;
+}
+
+.expertise-title {
+  margin: 0 0 0.5rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.expertise-run {
+  width: 100%;
+}
+
+.expertise-legend {
+  list-style: none;
+  margin: 0.6rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.expertise-row {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.85rem;
+}
+
+.expertise-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 2px solid transparent;
+  flex: 0 0 auto;
+}
+
+.expertise-name {
+  font-weight: 600;
+}
+
+.expertise-meta {
+  color: #64748b;
+  font-size: 0.78rem;
+}
+
+.expertise-note {
+  color: #94a3b8;
+  font-style: italic;
+  font-size: 0.78rem;
+  margin-left: auto;
+}

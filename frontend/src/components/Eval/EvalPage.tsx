@@ -6,15 +6,17 @@ import 'leaflet/dist/leaflet.css'
 import './EvalPage.css'
 import api from '../../services/api'
 import type { Coordinate, RouteOptions } from '../../services/api'
-import { scorePath, formatCost, isImpassable } from '../../services/evalApi'
+import { scorePath, formatCost, isImpassable, getRouteVariants } from '../../services/evalApi'
 import { parseGpx, downsamplePath, chooseGpxComparison } from '../../services/gpx'
-import type { ScoredPath, EvalCase } from '../../services/evalApi'
+import type { ScoredPath, EvalCase, RouteVariant } from '../../services/evalApi'
 import DrawLayer from './DrawLayer'
 import TrailsLayer from '../TrailsLayer'
 import CalibrationToolbar from '../CalibrationToolbar/CalibrationToolbar'
 import ComparePanel from './ComparePanel'
 import AttributionPanel from './AttributionPanel'
 import CasesPanel from './CasesPanel'
+import ExpertisePanel from './ExpertisePanel'
+import { variantsForDisplay } from './expertise'
 
 // Fix for default markers not showing (mirrors Map.tsx). Idempotent.
 import icon from 'leaflet/dist/images/marker-icon.png'
@@ -65,6 +67,11 @@ export default function EvalPage() {
   // Overlay the engine's trail/path network for the current viewport.
   const [showTrails, setShowTrails] = useState(false)
   const [trailCount, setTrailCount] = useState<number | null>(null)
+  // Expertise route family: one line per hiker level (casual…alpinist) for the
+  // same start/end, each toggleable on the map.
+  const [variants, setVariants] = useState<RouteVariant[] | null>(null)
+  const [visibleLevels, setVisibleLevels] = useState<Record<string, boolean>>({})
+  const [familyRunning, setFamilyRunning] = useState(false)
 
   // Latest values for the debounced calibration effect to read without
   // re-triggering itself (it must fire on `options` change only).
@@ -131,6 +138,31 @@ export default function EvalPage() {
       setRunning(false)
     }
   }
+
+  /** Route the same start→end at every expertise level in one call and show the
+   *  family. Identical lines are drawn once (backend marks them `duplicateOf`). */
+  const runFamily = async () => {
+    const s = startRef.current
+    const e = endRef.current
+    if (!s || !e) return
+    setFamilyRunning(true)
+    setStatus('Routing expertise family…')
+    try {
+      const vs = await getRouteVariants(s, e, options)
+      setVariants(vs)
+      // Show every level by default; the legend toggles remove them.
+      setVisibleLevels(Object.fromEntries(vs.map((v) => [v.level, true])))
+      const distinct = vs.filter((v) => v.path.length > 0 && !v.duplicateOf).length
+      setStatus(`Family routed: ${distinct} distinct route(s) across ${vs.length} levels.`)
+    } catch (err) {
+      setStatus('Error routing family: ' + (err as Error).message)
+    } finally {
+      setFamilyRunning(false)
+    }
+  }
+
+  const toggleLevel = (level: string) =>
+    setVisibleLevels((v) => ({ ...v, [level]: v[level] === false }))
 
   /** Re-score the already-drawn candidate under the given options (cheap). */
   const rescoreDrawn = async (opts: RouteOptions) => {
@@ -246,6 +278,8 @@ export default function EvalPage() {
     setDrawn(null)
     setDrawing(false)
     setHoveredSegment(null)
+    setVariants(null)
+    setVisibleLevels({})
     ranOnceRef.current = false
     setStatus('')
   }
@@ -299,6 +333,18 @@ export default function EvalPage() {
               pathOptions={{ color: '#2563eb', weight: 4 }}
             />
           )}
+
+          {/* Expertise route family — one line per visible, distinct level. */}
+          {variants &&
+            variantsForDisplay(variants, (lvl) => visibleLevels[lvl] !== false)
+              .filter((d) => d.draw)
+              .map((d) => (
+                <Polyline
+                  key={d.variant.level}
+                  positions={d.variant.path.map((c) => [c.lat, c.lon] as [number, number])}
+                  pathOptions={{ color: d.color, weight: 4, opacity: 0.85 }}
+                />
+              ))}
 
           {/* User-drawn candidate path in orange. */}
           {drawn && drawn.path.length > 0 && (
@@ -395,6 +441,15 @@ export default function EvalPage() {
             <span className="eval-trail-count"> ({trailCount} in view)</span>
           )}
         </label>
+
+        <ExpertisePanel
+          variants={variants}
+          visible={visibleLevels}
+          onToggle={toggleLevel}
+          onRun={runFamily}
+          disabled={!start || !end}
+          running={familyRunning}
+        />
 
         <div className="eval-status">{status || 'Click the map to set start, then end.'}</div>
 

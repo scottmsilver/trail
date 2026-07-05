@@ -65,6 +65,37 @@ export async function scorePath(
   return r.json()
 }
 
+/** One member of an expertise route family (see POST /api/routes/variants). A
+ *  variant whose line is identical to an easier level's carries `duplicateOf` so
+ *  clients draw each distinct route once; a level with no route has an empty
+ *  `path` and an `error` in `stats`. */
+export interface RouteVariant {
+  level: string
+  scrambleBudgetM: number
+  path: Coordinate[]
+  stats: Record<string, unknown>
+  duplicateOf?: string
+}
+
+/** Route the same start→end at several hiker expertise levels in one call (v2
+ *  engine, DEM loaded once). `levels` selects/orders them (default: all,
+ *  easiest first). */
+export async function getRouteVariants(
+  start: Coordinate,
+  end: Coordinate,
+  options: RouteOptions,
+  levels?: string[],
+): Promise<RouteVariant[]> {
+  const r = await fetch(`${API_BASE}/api/routes/variants`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ start, end, options, levels }),
+  })
+  if (!r.ok) throw new Error(`routes/variants ${r.status}`)
+  const data = await r.json()
+  return data.variants as RouteVariant[]
+}
+
 export interface TrailLines {
   lines: [number, number][][]
   count: number
