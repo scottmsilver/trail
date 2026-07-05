@@ -5,9 +5,6 @@ from datetime import datetime, timezone
 from typing import Dict
 
 import numpy as np
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Response, status
-from fastapi.middleware.cors import CORSMiddleware
-
 from app.engine_v2.service import TrailFinderServiceV2
 from app.models.eval import EvalCase, ScoredPath, ScorePathRequest
 from app.models.route import (
@@ -23,7 +20,7 @@ from app.services.eval_store import EvalStore
 from app.services.obstacle_config import ObstaclePresets
 from app.services.path_preferences import PathPreferencePresets, PathPreferences
 from app.services.trail_finder import TrailFinderService
-from fastapi import BackgroundTasks, FastAPI, HTTPException, status
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 
 logging.basicConfig(level=logging.INFO)
@@ -248,15 +245,25 @@ async def process_route(route_id: str, request: RouteRequest):
 
         # Get configurations based on user profile and custom options
         profile = request.options.userProfile if request.options else "default"
-
         engine = request.options.engine if request.options else "v2"
+        points = request.normalized_points()
+        options_dict = request.options.model_dump() if request.options else {}
 
         if engine == "v2":
             routes_storage[route_id]["progress"] = 30
-            path, stats = await trail_finder_v2.find_route(
-                request.start, request.end, request.options.model_dump() if request.options else {}
-            )
+            if len(points) > 2:
+                path, stats = await trail_finder_v2.find_multi_route(points, options_dict)
+            else:
+                path, stats = await trail_finder_v2.find_route(points[0], points[-1], options_dict)
         else:
+            # Multi-waypoint routing is a v2-only feature.
+            if len(points) > 2:
+                routes_storage[route_id]["status"] = RouteStatus.FAILED
+                routes_storage[route_id][
+                    "message"
+                ] = "Multi-waypoint routing requires engine v2; v1 supports start/end only."
+                return
+
             obstacle_config, path_preferences = get_configs_for_profile(profile, request.options)
 
             # Create trail finder with user's configurations and shared cache
@@ -265,7 +272,7 @@ async def process_route(route_id: str, request: RouteRequest):
             )
 
             # Validate request
-            if not profile_trail_finder.validate_route_request(request.start, request.end):
+            if not profile_trail_finder.validate_route_request(points[0], points[-1]):
                 routes_storage[route_id]["status"] = RouteStatus.FAILED
                 routes_storage[route_id]["message"] = "Invalid route request"
                 return
@@ -273,9 +280,7 @@ async def process_route(route_id: str, request: RouteRequest):
             routes_storage[route_id]["progress"] = 30
 
             # Find the route
-            path, stats = await profile_trail_finder.find_route(
-                request.start, request.end, request.options.model_dump() if request.options else {}
-            )
+            path, stats = await profile_trail_finder.find_route(points[0], points[-1], options_dict)
 
         routes_storage[route_id]["progress"] = 90
 
@@ -437,18 +442,20 @@ async def export_route_as_gpx(request: RouteRequest):
         obstacle_config=obstacle_config, path_preferences=path_preferences, dem_cache=shared_dem_cache
     )
 
-    # Find the route
-    path, stats = await profile_trail_finder.find_route(
-        request.start, request.end, request.options.model_dump() if request.options else {}
-    )
+    # Find the route (v2 stitches multi-point; v1/legacy uses first & last).
+    points = request.normalized_points()
+    options_dict = request.options.model_dump() if request.options else {}
+    engine = request.options.engine if request.options else "v2"
+    if engine == "v2" and len(points) > 2:
+        path, stats = await trail_finder_v2.find_multi_route(points, options_dict)
+    else:
+        path, stats = await profile_trail_finder.find_route(points[0], points[-1], options_dict)
 
     if not path:
         raise HTTPException(status_code=404, detail=stats.get("error", "No route found"))
 
     # Generate route name
-    route_name = (
-        f"Trail Route {request.start.lat:.4f},{request.start.lon:.4f} to {request.end.lat:.4f},{request.end.lon:.4f}"
-    )
+    route_name = f"Trail Route {points[0].lat:.4f},{points[0].lon:.4f} to {points[-1].lat:.4f},{points[-1].lon:.4f}"
 
     # Create description with statistics
     description_parts = []
