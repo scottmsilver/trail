@@ -420,3 +420,28 @@ button {
     max-height: 300px;
   }
 }
+
+.waypoint-marker { background: transparent; border: none; }
+.wp-pin {
+  width: 26px; height: 26px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font: 600 13px/1 system-ui, sans-serif; color: #fff;
+  box-shadow: 0 1px 4px rgba(0,0,0,.4);
+}
+.wp-terminal { background: #C2571A; }
+.wp-via { background: #3E5C4B; }
+.points-list { margin-top: .5rem; display: flex; flex-direction: column; gap: .25rem; }
+.points-list-header {
+  font-weight: 600;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+  font-size: 0.625rem;
+  margin-bottom: 0.125rem;
+}
+.point-row { display: flex; align-items: center; gap: .5rem; }
+.point-badge {
+  width: 20px; height: 20px; border-radius: 50%; background: #3E5C4B; color: #fff;
+  display: inline-flex; align-items: center; justify-content: center; font-size: 12px;
+}
+.point-delete { margin-left: auto; border: none; background: none; cursor: pointer; font-size: 16px; color: #A33326; }

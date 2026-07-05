@@ -29,8 +29,9 @@ interface Coordinate {
 }
 
 interface MapProps {
-  start?: Coordinate
-  end?: Coordinate
+  points?: Coordinate[]
+  onPointDrag?: (index: number, coord: Coordinate) => void
+  onPointDelete?: (index: number) => void
   path?: Coordinate[]
   pathWithSlopes?: any[]  // Path with slope data from backend
   center?: { lat: number; lon: number }
@@ -109,11 +110,15 @@ function MapReadyHandler({ onMapReady }: { onMapReady?: (map: L.Map) => void }) 
   return null;
 }
 
-export default function Map({ start, end, path, pathWithSlopes, center, onMapClick, onMapReady, showCostSurface, onCloseCostSurface, costSurfaceBounds, costPointMode, showTrails, onTrailCount }: MapProps) {
+export default function Map({ points, onPointDrag, onPointDelete, path, pathWithSlopes, center, onMapClick, onMapReady, showCostSurface, onCloseCostSurface, costSurfaceBounds, costPointMode, showTrails, onTrailCount }: MapProps) {
   // Default center (Utah area)
   const defaultCenter: LatLngExpression = [40.640, -111.570]
   const zoom = 13
   const [showSlopes, setShowSlopes] = useState(false)
+
+  const pts = points ?? []
+  const start = pts.length > 0 ? pts[0] : undefined
+  const end = pts.length > 1 ? pts[pts.length - 1] : undefined
 
   return (
     <MapContainer
@@ -189,17 +194,35 @@ export default function Map({ start, end, path, pathWithSlopes, center, onMapCli
           markers and the computed route. */}
       <TrailsLayer active={showTrails || false} onCount={onTrailCount || (() => {})} />
 
-      {start && (
-        <Marker position={[start.lat, start.lon]}>
-          <Popup>Start Point</Popup>
-        </Marker>
-      )}
-
-      {end && (
-        <Marker position={[end.lat, end.lon]}>
-          <Popup>End Point</Popup>
-        </Marker>
-      )}
+      {pts.map((p, i) => {
+        const isTerminal = i === 0 || i === pts.length - 1
+        const label = i === 0 ? 'Start' : i === pts.length - 1 ? 'End' : `Point ${i + 1}`
+        const icon = L.divIcon({
+          className: 'waypoint-marker',
+          html: `<div class="wp-pin ${isTerminal ? 'wp-terminal' : 'wp-via'}">${i + 1}</div>`,
+          iconSize: [26, 26],
+          iconAnchor: [13, 13],
+        })
+        return (
+          <Marker
+            key={i}
+            position={[p.lat, p.lon]}
+            icon={icon}
+            draggable={true}
+            eventHandlers={{
+              dragend: (e: any) => {
+                const ll = e.target.getLatLng()
+                onPointDrag?.(i, { lat: ll.lat, lon: ll.lng })
+              },
+            }}
+          >
+            <Popup>
+              <div>{label}</div>
+              <button onClick={() => onPointDelete?.(i)}>Delete point</button>
+            </Popup>
+          </Marker>
+        )
+      })}
 
       {path && path.length > 0 && (
         <PathWithSlopes path={path} pathWithSlopes={pathWithSlopes} />

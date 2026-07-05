@@ -12,8 +12,10 @@ import type { Coordinate, RouteResult, RouteOptions } from './services/api'
 import L from 'leaflet'
 
 function App() {
-  const [start, setStart] = useState<Coordinate | null>(null)
-  const [end, setEnd] = useState<Coordinate | null>(null)
+  const [points, setPoints] = useState<Coordinate[]>([])
+  // Legacy consumers still think in start/end; derive them from the list.
+  const start = points.length > 0 ? points[0] : null
+  const end = points.length > 1 ? points[points.length - 1] : null
   const [route, setRoute] = useState<RouteResult | null>(null)
   const [loading, setLoading] = useState(false)
   const [status, setStatus] = useState('')
@@ -49,7 +51,7 @@ function App() {
 
   const useAsStart = (loc: SavedLocation) => {
     const coord = { lat: loc.lat, lon: loc.lon }
-    setStart(coord)
+    setPoints(prev => (prev.length === 0 ? [coord] : [coord, ...prev.slice(1)]))
     setMapCenter(coord)
     recordRecent(loc.lat, loc.lon, loc.name)
     setStatus(`Start set to "${loc.name}".`)
@@ -57,38 +59,45 @@ function App() {
 
   const useAsEnd = (loc: SavedLocation) => {
     const coord = { lat: loc.lat, lon: loc.lon }
-    setEnd(coord)
+    setPoints(prev => (prev.length === 0 ? [coord] : [...prev, coord]))
     setMapCenter(coord)
     recordRecent(loc.lat, loc.lon, loc.name)
     setStatus(`End set to "${loc.name}".`)
   }
 
   const handleMapClick = (coord: Coordinate) => {
-    // If a route has been found, don't accept new clicks
+    // Once a route is computed, the first new click starts a fresh route.
     if (route) {
+      setRoute(null)
+      setDebugData(null)
+      setShowDebug(false)
+      setPoints([coord])
+      recordRecent(coord.lat, coord.lon)
+      setStatus('Start point set. Click to add more points.')
       return
     }
+    setPoints(prev => [...prev, coord])
+    recordRecent(coord.lat, coord.lon)
+    setStatus(
+      points.length === 0
+        ? 'Start point set. Click to add more points.'
+        : `Point ${points.length + 1} added. Click "Find Route" to calculate.`
+    )
+  }
 
-    if (!start) {
-      setStart(coord)
-      recordRecent(coord.lat, coord.lon)
-      setStatus('Start point set. Click to set end point.')
-    } else if (!end) {
-      setEnd(coord)
-      recordRecent(coord.lat, coord.lon)
-      setStatus('End point set. Click "Find Route" to calculate.')
-    } else {
-      // Reset
-      setStart(coord)
-      setEnd(null)
-      setRoute(null)
-      recordRecent(coord.lat, coord.lon)
-      setStatus('Start point set. Click to set end point.')
-    }
+  const deletePoint = (index: number) => {
+    setPoints(prev => prev.filter((_, i) => i !== index))
+    setRoute(null)
+    setStatus('Point removed.')
+  }
+
+  const movePoint = (index: number, coord: Coordinate) => {
+    setPoints(prev => prev.map((p, i) => (i === index ? coord : p)))
+    setRoute(null)
   }
 
   const findRoute = async () => {
-    if (!start || !end) return
+    if (points.length < 2) return
 
     setLoading(true)
     setStatus('Calculating route...')
@@ -96,7 +105,7 @@ function App() {
 
     try {
       // Use the imported api instance with all route options
-      const response = await api.calculateRoute([start, end], routeOptions)
+      const response = await api.calculateRoute(points, routeOptions)
 
       // Poll for status
       let retries = 0
@@ -176,8 +185,7 @@ function App() {
   }
 
   const reset = () => {
-    setStart(null)
-    setEnd(null)
+    setPoints([])
     setRoute(null)
     setDebugData(null)
     setShowDebug(false)
@@ -212,12 +220,12 @@ function App() {
         setStatus('GPX file downloaded successfully!')
       } else {
         // Export directly from current route data
-        if (!start || !end) {
+        if (points.length < 2) {
           setStatus('No route data to export')
           return
         }
 
-        const blob = await api.exportRouteAsGPX([start, end], routeOptions)
+        const blob = await api.exportRouteAsGPX(points, routeOptions)
         const url = window.URL.createObjectURL(blob)
         const a = document.createElement('a')
         a.href = url
@@ -476,20 +484,22 @@ function App() {
                     </svg>
                   </button>
                 )}
-                <div className="coord-list">
-                  {start && (
-                    <div className="coord-item">
-                      <span className="coord-label">Start</span>
-                      <span className="coord-value">{start.lat.toFixed(4)}, {start.lon.toFixed(4)}</span>
-                    </div>
-                  )}
-                  {end && (
-                    <div className="coord-item">
-                      <span className="coord-label">End</span>
-                      <span className="coord-value">{end.lat.toFixed(4)}, {end.lon.toFixed(4)}</span>
-                    </div>
-                  )}
-                </div>
+                {points.length > 0 && (
+                  <div className="points-list">
+                    <div className="points-list-header">Waypoints ({points.length})</div>
+                    {points.map((p, i) => (
+                      <div className="point-row" key={i}>
+                        <span className="point-badge">{i + 1}</span>
+                        <span className="coord-value">{p.lat.toFixed(4)}, {p.lon.toFixed(4)}</span>
+                        <button
+                          className="point-delete"
+                          onClick={() => deletePoint(i)}
+                          title="Remove this point"
+                        >×</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </>
             )}
           </div>
@@ -497,7 +507,7 @@ function App() {
           <div className="buttons">
             <button
               onClick={findRoute}
-              disabled={!start || !end || loading || debugLoading}
+              disabled={points.length < 2 || loading || debugLoading}
               className="btn-primary"
             >
               {loading ? 'Calculating...' : 'Find Route'}
@@ -546,8 +556,7 @@ function App() {
 
         <div className="map-wrapper">
           <Map
-            start={start || undefined}
-            end={end || undefined}
+            points={points}
             path={route?.path}
             pathWithSlopes={route?.stats?.path_with_slopes}
             center={mapCenter || undefined}
@@ -562,6 +571,8 @@ function App() {
             costPointMode={costPointMode}
             showTrails={showTrails}
             onTrailCount={setTrailCount}
+            onPointDrag={movePoint}
+            onPointDelete={deletePoint}
           />
           <SearchBox onLocationSelect={handleLocationSelect} />
           {showPrepopulate && mapRef.current && (

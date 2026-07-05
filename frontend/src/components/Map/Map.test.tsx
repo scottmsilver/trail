@@ -17,7 +17,11 @@ vi.mock('react-leaflet', () => {
   return {
     MapContainer: ({ children }: any) => <div data-testid="map-container">{children}</div>,
     TileLayer: () => <div data-testid="tile-layer" />,
-    Marker: ({ children }: any) => <div data-testid="marker">{children}</div>,
+    Marker: ({ children, eventHandlers }: any) => (
+      <div data-testid="marker" onClick={() => eventHandlers?.dragend?.({ target: { getLatLng: () => ({ lat: 1, lng: 2 }) } })}>
+        {children}
+      </div>
+    ),
     Popup: ({ children }: any) => <div data-testid="popup">{children}</div>,
     Polyline: () => <div data-testid="polyline" />,
     LayerGroup: ({ children }: any) => <div data-testid="layer-group">{children}</div>,
@@ -33,14 +37,22 @@ describe('Map Component', () => {
     expect(screen.getByTestId('map-container')).toBeInTheDocument()
   })
 
-  it('shows start and end markers when coordinates are set', () => {
-    const startCoord = { lat: 40.630, lon: -111.580 }
-    const endCoord = { lat: 40.650, lon: -111.560 }
+  it('renders one numbered marker per point', () => {
+    const points = [
+      { lat: 40.630, lon: -111.580 },
+      { lat: 40.640, lon: -111.570 },
+      { lat: 40.650, lon: -111.560 },
+    ]
+    render(<Map points={points} />)
+    expect(screen.getAllByTestId('marker')).toHaveLength(3)
+  })
 
-    render(<Map start={startCoord} end={endCoord} />)
-
-    const markers = screen.getAllByTestId('marker')
-    expect(markers).toHaveLength(2)
+  it('fires onPointDrag with index and new coord on dragend', () => {
+    const onPointDrag = vi.fn()
+    const points = [{ lat: 40.630, lon: -111.580 }, { lat: 40.640, lon: -111.570 }]
+    render(<Map points={points} onPointDrag={onPointDrag} />)
+    screen.getAllByTestId('marker')[1].click()
+    expect(onPointDrag).toHaveBeenCalledWith(1, { lat: 1, lon: 2 })
   })
 
   it('displays route when path is provided', () => {
