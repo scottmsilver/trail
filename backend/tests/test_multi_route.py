@@ -73,3 +73,12 @@ async def test_failing_leg_names_the_leg(monkeypatch):
     path, stats = await service.find_multi_route([P1, P2, P3], dict(OPTS))
     assert path == []
     assert "leg 2" in stats["error"]
+
+
+@pytest.mark.asyncio
+async def test_empty_points_returns_error():
+    service = make_service()
+    path, stats = await service.find_multi_route([], dict(OPTS))
+    assert path == []
+    assert "error" in stats
+    assert stats["engine"] == "v2"

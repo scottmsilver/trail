@@ -262,7 +262,7 @@ class TrailFinderServiceV2:
             logger.exception("v2 route failed")
             return [], {"error": f"v2 engine error: {e}"}
 
-    async def find_multi_route(self, points, options: dict):
+    async def find_multi_route(self, points: List[Coordinate], options: dict):
         """Route through `points` in order by stitching N-1 single-pair legs.
 
         Point 0 is the start, point N-1 the end. Consecutive identical points are
@@ -271,6 +271,9 @@ class TrailFinderServiceV2:
         stat keys find_route produces, plus a per-leg `legs` breakdown.
         """
         options = options or {}
+
+        if not points:
+            return [], {"error": "Multi-point route needs at least 2 distinct points", "engine": "v2"}
 
         # Collapse consecutive identical points (no zero-length legs).
         pts = [points[0]]
