@@ -316,7 +316,7 @@ function App() {
     <div className="app">
       <header className="app-header">
         <h1>Trail Finder</h1>
-        <p>Find the optimal hiking route between two points</p>
+        <p>Find the optimal hiking route through your waypoints</p>
       </header>
 
       <main className="app-main">
