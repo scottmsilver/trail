@@ -123,6 +123,32 @@
   border: 1px solid #fde047;
 }
 
+.eval-osm-warning {
+  margin: 8px 0;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: #fef3c7;
+  border: 1px solid #fcd34d;
+  color: #92400e;
+  font-size: 0.85rem;
+  line-height: 1.35;
+}
+.eval-osm-warning button {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 3px 8px;
+  border: 1px solid #d97706;
+  border-radius: 5px;
+  background: #f59e0b;
+  color: #fff;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.eval-osm-warning button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .eval-snap-toggle {
   display: flex;
   align-items: center;
@@ -132,3 +158,40 @@
   cursor: pointer;
 }
 .eval-trail-count { color: #15803d; font-size: 0.78rem; }
+
+.eval-paste {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0;
+}
+.eval-paste-input {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: monospace;
+  font-size: 0.78rem;
+  padding: 6px 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  resize: vertical;
+}
+
+.eval-terrain-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.25rem 0 0.5rem 1.5rem;
+  font-size: 0.78rem;
+  color: #475569;
+}
+.eval-terrain-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+.eval-terrain-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  border: 1px solid rgba(0, 0, 0, 0.2);
+}

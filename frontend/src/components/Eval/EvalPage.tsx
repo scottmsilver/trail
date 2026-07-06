@@ -6,15 +6,21 @@ import 'leaflet/dist/leaflet.css'
 import './EvalPage.css'
 import api from '../../services/api'
 import type { Coordinate, RouteOptions } from '../../services/api'
-import { scorePath, formatCost, isImpassable } from '../../services/evalApi'
-import { parseGpx, downsamplePath, chooseGpxComparison } from '../../services/gpx'
-import type { ScoredPath, EvalCase } from '../../services/evalApi'
+import { scorePath, formatCost, isImpassable, getRouteVariants } from '../../services/evalApi'
+import { parseGpx, downsamplePath, chooseGpxComparison, buildGpx } from '../../services/gpx'
+import { downloadText } from '../../services/download'
+import { encodeReference, decodeReference, referenceToCase } from './routeReference'
+import type { ScoredPath, EvalCase, RouteVariant } from '../../services/evalApi'
 import DrawLayer from './DrawLayer'
 import TrailsLayer from '../TrailsLayer'
+import TerrainLayer from '../TerrainLayer'
+import { kindsInView, kindLabel, kindColor } from '../terrainKinds'
 import CalibrationToolbar from '../CalibrationToolbar/CalibrationToolbar'
 import ComparePanel from './ComparePanel'
 import AttributionPanel from './AttributionPanel'
 import CasesPanel from './CasesPanel'
+import ExpertisePanel from './ExpertisePanel'
+import { variantsForDisplay } from './expertise'
 
 // Fix for default markers not showing (mirrors Map.tsx). Idempotent.
 import icon from 'leaflet/dist/images/marker-icon.png'
@@ -62,9 +68,29 @@ export default function EvalPage() {
   // "Go via this trail": snap the drawn candidate onto nearby trails before
   // scoring. Default on (per design); degrades to exact-drawn where no trail.
   const [snap, setSnap] = useState<'none' | 'trail'>('trail')
-  // Overlay the engine's trail/path network for the current viewport.
-  const [showTrails, setShowTrails] = useState(false)
+  // Overlay the engine's trail/path network for the current viewport. On by
+  // default so it's always clear what the engine can route on.
+  const [showTrails, setShowTrails] = useState(true)
   const [trailCount, setTrailCount] = useState<number | null>(null)
+  // Mark notable terrain (glaciers, water, cliffs, ...) so it's clear what a
+  // route crosses — e.g. a glacier that reads like a pond on the base map. On by
+  // default so passable-but-notable terrain is visible without toggling.
+  const [showTerrain, setShowTerrain] = useState(true)
+  const [terrainKinds, setTerrainKinds] = useState<string[]>([])
+  // Expertise route family: one line per hiker level (casual…alpinist) for the
+  // same start/end, each toggleable on the map.
+  const [variants, setVariants] = useState<RouteVariant[] | null>(null)
+  const [visibleLevels, setVisibleLevels] = useState<Record<string, boolean>>({})
+  const [familyRunning, setFamilyRunning] = useState(false)
+  // Set when the backend flags that some OSM tiles for the route area couldn't
+  // be loaded (route may cross unmodeled water/obstacles). Offers a force-reload.
+  const [osmMissing, setOsmMissing] = useState(false)
+  // Which action ran last, so the OSM reload button repeats the right one.
+  const lastRunRef = useRef<'optimal' | 'family' | null>(null)
+  // Copy/paste route reference: a small textarea (toggled) for pasting a shared
+  // reference JSON and applying it via the existing loadCase restore path.
+  const [pasteOpen, setPasteOpen] = useState(false)
+  const [pasteText, setPasteText] = useState('')
 
   // Latest values for the debounced calibration effect to read without
   // re-triggering itself (it must fire on `options` change only).
@@ -105,6 +131,7 @@ export default function EvalPage() {
     const e = endRef.current
     if (!s || !e) return
     setRunning(true)
+    setOsmMissing(false)
     setStatus('Running…')
     try {
       const { routeId } = await api.calculateRoute(s, e, opts)
@@ -113,7 +140,9 @@ export default function EvalPage() {
         const st = await api.getRouteStatus(routeId)
         setStatus(`Running… ${st.progress}%`)
         if (st.status === 'completed') {
-          path = (await api.getRoute(routeId)).path
+          const res = await api.getRoute(routeId)
+          path = res.path
+          setOsmMissing(!!res.stats?.osmDataMissing)
           break
         }
         if (st.status === 'failed') throw new Error(st.message || 'route calculation failed')
@@ -124,6 +153,7 @@ export default function EvalPage() {
       const scored = await scorePath(path, opts)
       setOptimal(scored)
       ranOnceRef.current = true
+      lastRunRef.current = 'optimal'
       setStatus(`Optimal scored (cost ${formatCost(scored.totalCost)}).`)
     } catch (err) {
       setStatus('Error: ' + (err as Error).message)
@@ -131,6 +161,40 @@ export default function EvalPage() {
       setRunning(false)
     }
   }
+
+  /** Route the same start→end at every expertise level in one call and show the
+   *  family. Identical lines are drawn once (backend marks them `duplicateOf`). */
+  const runFamily = async (extra: Partial<RouteOptions> = {}) => {
+    const s = startRef.current
+    const e = endRef.current
+    if (!s || !e) return
+    setFamilyRunning(true)
+    setOsmMissing(false)
+    setStatus('Routing expertise family…')
+    try {
+      const vs = await getRouteVariants(s, e, { ...options, ...extra })
+      setVariants(vs)
+      setOsmMissing(vs.some((v) => (v.stats as { osmDataMissing?: boolean }).osmDataMissing === true))
+      lastRunRef.current = 'family'
+      // Show every level by default; the legend toggles remove them.
+      setVisibleLevels(Object.fromEntries(vs.map((v) => [v.level, true])))
+      const distinct = vs.filter((v) => v.path.length > 0 && !v.duplicateOf).length
+      setStatus(`Family routed: ${distinct} distinct route(s) across ${vs.length} levels.`)
+    } catch (err) {
+      setStatus('Error routing family: ' + (err as Error).message)
+    } finally {
+      setFamilyRunning(false)
+    }
+  }
+
+  /** Force-refresh the area's OSM tiles and repeat whichever run was last. */
+  const reloadOsm = () => {
+    if (lastRunRef.current === 'family') runFamily({ refreshOsm: true })
+    else runOptimal({ ...options, refreshOsm: true })
+  }
+
+  const toggleLevel = (level: string) =>
+    setVisibleLevels((v) => ({ ...v, [level]: v[level] === false }))
 
   /** Re-score the already-drawn candidate under the given options (cheap). */
   const rescoreDrawn = async (opts: RouteOptions) => {
@@ -246,8 +310,52 @@ export default function EvalPage() {
     setDrawn(null)
     setDrawing(false)
     setHoveredSegment(null)
+    setVariants(null)
+    setVisibleLevels({})
     ranOnceRef.current = false
     setStatus('')
+  }
+
+  const canExport = !!(drawn && drawn.path.length >= 2)
+  const canCopyRef = !!(start && end)
+
+  /** Download the drawn candidate as a GPX file. */
+  const downloadDrawnGpx = () => {
+    if (!drawn || drawn.path.length < 2) return
+    downloadText('drawn-route.gpx', buildGpx(drawn.path, 'Drawn route'), 'application/gpx+xml')
+    setStatus('Downloaded drawn-route.gpx')
+  }
+
+  /** Copy a compact reference (endpoints + weights + optional drawn path) to the
+   *  clipboard so a routing case can be pasted back to reproduce it. Only start +
+   *  end are required — a drawn path is included when present but not needed, so
+   *  an engine route (no drawing) can be shared too. */
+  const copyReference = async () => {
+    if (!start || !end) return
+    try {
+      const text = encodeReference({
+        start,
+        end,
+        options,
+        path: drawn && drawn.path.length >= 2 ? downsamplePath(drawn.path, 300) : [],
+      })
+      await navigator.clipboard.writeText(text)
+      setStatus('Reference copied to clipboard.')
+    } catch (err) {
+      setStatus('Copy failed: ' + (err as Error).message)
+    }
+  }
+
+  /** Validate + apply pasted reference text through the existing loadCase path. */
+  const applyReference = async () => {
+    try {
+      const ref = decodeReference(pasteText)
+      setPasteText('')
+      setPasteOpen(false)
+      await loadCase(referenceToCase(ref))
+    } catch (err) {
+      setStatus('Paste failed: ' + (err as Error).message)
+    }
   }
 
   // Verdict for the what-if loop.
@@ -278,6 +386,7 @@ export default function EvalPage() {
           />
 
           <TrailsLayer active={showTrails} onCount={setTrailCount} />
+          <TerrainLayer active={showTerrain} onKinds={setTerrainKinds} />
           <EvalClickHandler disabled={drawing} onClick={handleMapClick} />
           <DrawLayer active={drawing} onFinish={handleDrawFinish} />
 
@@ -299,6 +408,18 @@ export default function EvalPage() {
               pathOptions={{ color: '#2563eb', weight: 4 }}
             />
           )}
+
+          {/* Expertise route family — one line per visible, distinct level. */}
+          {variants &&
+            variantsForDisplay(variants, (lvl) => visibleLevels[lvl] !== false)
+              .filter((d) => d.draw)
+              .map((d) => (
+                <Polyline
+                  key={d.variant.level}
+                  positions={d.variant.path.map((c) => [c.lat, c.lon] as [number, number])}
+                  pathOptions={{ color: d.color, weight: 4, opacity: 0.85 }}
+                />
+              ))}
 
           {/* User-drawn candidate path in orange. */}
           {drawn && drawn.path.length > 0 && (
@@ -370,10 +491,42 @@ export default function EvalPage() {
             style={{ display: 'none' }}
             onChange={handleGpxFile}
           />
+          <button className="eval-btn" onClick={downloadDrawnGpx} disabled={!canExport}>
+            Download GPX
+          </button>
+          <button className="eval-btn" onClick={copyReference} disabled={!canCopyRef}>
+            Copy reference
+          </button>
+          <button
+            className={`eval-btn ${pasteOpen ? 'eval-btn-active' : ''}`}
+            onClick={() => setPasteOpen((o) => !o)}
+          >
+            Paste reference
+          </button>
           <button className="eval-btn" onClick={clear}>
             Clear
           </button>
         </section>
+
+        {pasteOpen && (
+          <section className="eval-paste">
+            <textarea
+              className="eval-paste-input"
+              placeholder="Paste a route reference JSON here…"
+              value={pasteText}
+              onChange={(e) => setPasteText(e.target.value)}
+              aria-label="Route reference JSON"
+              rows={4}
+            />
+            <button
+              className="eval-btn eval-btn-primary"
+              onClick={applyReference}
+              disabled={pasteText.trim() === ''}
+            >
+              Apply
+            </button>
+          </section>
+        )}
 
         <label className="eval-snap-toggle">
           <input
@@ -396,7 +549,47 @@ export default function EvalPage() {
           )}
         </label>
 
+        <label className="eval-snap-toggle">
+          <input
+            type="checkbox"
+            checked={showTerrain}
+            onChange={(e) => setShowTerrain(e.target.checked)}
+          />
+          Mark terrain (glaciers, water, cliffs…)
+        </label>
+        {showTerrain && kindsInView(terrainKinds).length > 0 && (
+          <div className="eval-terrain-legend">
+            {kindsInView(terrainKinds).map((k) => (
+              <span key={k} className="eval-terrain-legend-item">
+                <span
+                  className="eval-terrain-swatch"
+                  style={{ background: kindColor(k) }}
+                />
+                {kindLabel(k)}
+              </span>
+            ))}
+          </div>
+        )}
+
+        <ExpertisePanel
+          variants={variants}
+          visible={visibleLevels}
+          onToggle={toggleLevel}
+          onRun={() => runFamily()}
+          disabled={!start || !end}
+          running={familyRunning}
+        />
+
         <div className="eval-status">{status || 'Click the map to set start, then end.'}</div>
+
+        {osmMissing && (
+          <div className="eval-osm-warning" role="alert">
+            ⚠ OSM data was missing for part of this route — it may cross unmodeled water/obstacles.
+            <button type="button" onClick={reloadOsm} disabled={running || familyRunning}>
+              Reload OSM data
+            </button>
+          </div>
+        )}
 
         {verdict && (
           <div className={`eval-verdict ${verdict.win ? 'eval-verdict-win' : 'eval-verdict-lose'}`}>

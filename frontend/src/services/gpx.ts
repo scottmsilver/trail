@@ -41,6 +41,54 @@ export function parseGpx(text: string): GpxPoint[] {
   return coords
 }
 
+/** Escape a string for use inside XML text/attribute content. */
+function escapeXml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;')
+}
+
+/**
+ * Serialize a path to a GPX 1.1 document: a single `<trk><trkseg>` of `<trkpt>`
+ * with lat/lon attributes (and `<ele>` only where a point carries a finite one).
+ * Round-trip safe with `parseGpx` for lat/lon. The `name` is XML-escaped.
+ * Throws on an empty path (nothing to serialize).
+ */
+export function buildGpx(points: GpxPoint[], name = 'Route'): string {
+  if (points.length < 1) throw new Error('buildGpx needs at least one point')
+  const trkpts = points
+    .map((p) => {
+      // Guard every value that lands in an XML attribute: only finite, in-range
+      // coordinates (and finite optional ele) — never NaN/Infinity/strings.
+      if (
+        !Number.isFinite(p.lat) ||
+        !Number.isFinite(p.lon) ||
+        p.lat < -90 ||
+        p.lat > 90 ||
+        p.lon < -180 ||
+        p.lon > 180
+      ) {
+        throw new Error('buildGpx: invalid coordinate')
+      }
+      const ele = Number.isFinite(p.ele as number) ? `<ele>${p.ele}</ele>` : ''
+      return `      <trkpt lat="${p.lat}" lon="${p.lon}">${ele}</trkpt>`
+    })
+    .join('\n')
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="trail-eval" xmlns="http://www.topografix.com/GPX/1/1">
+  <trk>
+    <name>${escapeXml(name)}</name>
+    <trkseg>
+${trkpts}
+    </trkseg>
+  </trk>
+</gpx>
+`
+}
+
 function haversineM(a: Coordinate, b: Coordinate): number {
   const R = 6371000
   const dLat = ((b.lat - a.lat) * Math.PI) / 180

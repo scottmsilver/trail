@@ -36,6 +36,8 @@ export interface RouteOptions {
   trailPreference?: number
   engine?: 'v1' | 'v2'
   heuristicWeight?: number
+  // v2: force re-fetch of the area's OSM tiles (ignores cache + failure cooldown).
+  refreshOsm?: boolean
 }
 
 export interface RouteResponse {
@@ -60,6 +62,9 @@ export interface RouteResult {
     difficulty: string
     debug_data?: any
     path_with_slopes?: any[]
+    // v2: set when some OSM tiles for the route area could not be loaded.
+    osmDataMissing?: boolean
+    osmMissingTiles?: number
   }
   createdAt: string
 }

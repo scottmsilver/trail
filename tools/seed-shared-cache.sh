@@ -51,6 +51,14 @@ export TRAIL_DEM_DATA_DIR="$SHARED/dem_data"
 export TRAIL_TILE_CACHE_DIR="$SHARED/tile_cache"
 export TRAIL_V2_DEM_DIR="$SHARED/dem_data_v2"
 export TRAIL_V2_PATH_CACHE_DIR="$SHARED/path_cache_v2"
+
+# Local Overpass server (osm3s on :12345) so OSM is served from this box instead
+# of the firewalled public mirrors. Base URL only — osmnx appends /interpreter.
+# apply_osm_settings() also turns off osmnx self-rate-limiting for a custom
+# endpoint (its /api/status poll hangs on this Overpass build's status format).
+# Override the endpoint with OVERPASS_URLS, or force rate limiting with
+# OVERPASS_RATE_LIMIT=1. Leave OSM_DISABLE unset so routes actually fetch.
+export OVERPASS_URLS="${TRAIL_LOCAL_OVERPASS:-http://localhost:12345/api}"
 EOF
 echo "wrote $SHARED/trail-shared.env"
 echo "done. sizes:"
